@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { apiTokenStorage } from "../../replit_integrations/auth";
 import { storage } from "../../storage";
 import { sendError } from "./response";
+import { resolveUserScope } from "../../authz/scope";
 
 export interface ApiUser {
   id: string;
@@ -99,13 +100,14 @@ export function requireApiRole(...allowedRoles: string[]): RequestHandler {
       return sendError(res, "Unauthorized", "A valid authentication token is required.");
     }
     try {
-      const userRole = await storage.getUserRole(req.apiUser.id);
-      if (!userRole) {
+      const scope = await resolveUserScope(req.apiUser.id);
+      if (!scope) {
         return sendError(res, "Forbidden", "No role is assigned to this account.");
       }
-      if (!allowedRoles.includes(userRole.role)) {
+      if (!allowedRoles.includes(scope.role)) {
         return sendError(res, "Forbidden", "This account does not have permission to perform this action.");
       }
+      req.scope = scope;
       next();
     } catch (error) {
       console.error("[api/v1] role check failed:", error);
@@ -120,18 +122,20 @@ export function requireApiPermission(permission: string): RequestHandler {
       return sendError(res, "Unauthorized", "A valid authentication token is required.");
     }
     try {
-      const userRole = await storage.getUserRole(req.apiUser.id);
-      if (!userRole) {
+      const scope = await resolveUserScope(req.apiUser.id);
+      if (!scope) {
         return sendError(res, "Forbidden", "No role is assigned to this account.");
       }
-      if (userRole.role === "super_admin") {
+      if (scope.role === "super_admin") {
+        req.scope = scope;
         return next();
       }
       const rolePermissions = await storage.getRolePermissions();
-      const rolePerms = rolePermissions[userRole.role] ?? [];
+      const rolePerms = rolePermissions[scope.role] ?? [];
       if (!rolePerms.includes(permission)) {
         return sendError(res, "Forbidden", `This account is missing the '${permission}' permission.`);
       }
+      req.scope = scope;
       next();
     } catch (error) {
       console.error("[api/v1] permission check failed:", error);

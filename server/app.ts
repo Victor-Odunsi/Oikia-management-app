@@ -70,6 +70,11 @@ export default async function runApp(
   const server = await registerRoutes(app);
 
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ success: false, error: "FileTooLarge", message: "File exceeds the 10MB upload limit." });
+      return;
+    }
+
     const status = err.status || err.statusCode || 500;
     console.error(`[error] ${req.method} ${req.path}:`, err);
 

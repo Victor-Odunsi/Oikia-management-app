@@ -1,10 +1,11 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertMemberSchema, insertFirstTimerSchema, insertAttendanceSchema, insertCommunicationSchema, insertFollowUpTaskSchema, insertClusterSchema, insertCellSchema, insertCellAttendanceSchema, insertBranchSchema, insertUserRoleSchema, signupSchema, insertOutreachSchema } from "@shared/schema";
+import { insertMemberSchema, insertFirstTimerSchema, insertAttendanceSchema, insertCommunicationSchema, insertFollowUpTaskSchema, insertClusterSchema, insertCellSchema, insertCellAttendanceSchema, insertBranchSchema, insertUserRoleSchema, roleAssignmentSchema, updateUserRoleSchema, signupSchema, insertOutreachSchema } from "@shared/schema";
 import { ZodError } from "zod";
 import multer from "multer";
-import { parse } from "csv-parse/sync";
+import { parse } from "csv-parse";
+import { Readable } from "stream";
 import { stringify } from "csv-stringify/sync";
 import { setupAuth, registerAuthRoutes, isAuthenticated, requireRole, requirePermission, invalidatePermissionsCache } from "./replit_integrations/auth";
 import { apiV1Router } from "./api/v1";
@@ -13,6 +14,7 @@ import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
 import crypto from "crypto";
+import { UNRESTRICTED_SCOPE } from "./authz/scope";
 
 // ---------------------------------------------------------------------------
 // Encryption helpers for SMTP password storage (AES-256-GCM)
@@ -194,7 +196,10 @@ async function verifyPassword(password: string, hash: string): Promise<boolean> 
   return bcrypt.compare(password, hash);
 }
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB — comfortable headroom for a few thousand CSV rows
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication (must be before other routes)
@@ -397,7 +402,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/public/clusters", async (req, res) => {
     try {
       const branchId = req.query.branchId as string | undefined;
-      const clusterList = await storage.getClusters(branchId);
+      const clusterList = await storage.getClusters(UNRESTRICTED_SCOPE, branchId);
       res.json(clusterList);
     } catch (error) {
       console.error("Error fetching clusters:", error);
@@ -409,7 +414,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/public/first-timers", async (req, res) => {
     try {
       const validatedData = insertFirstTimerSchema.parse(req.body);
-      const firstTimer = await storage.createFirstTimer(validatedData);
+      const firstTimer = await storage.createFirstTimer(UNRESTRICTED_SCOPE, validatedData);
       res.status(201).json(firstTimer);
     } catch (error) {
       console.error("Error creating first timer:", error);
@@ -515,7 +520,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Member duplicate detection and merge
   app.get("/api/members/duplicates", isAuthenticated, requirePermission("members.view"), async (req, res) => {
     try {
-      const groups = await storage.findDuplicates();
+      const groups = await storage.findDuplicates(req.scope!);
       console.log(`[duplicates] found ${groups.length} group(s):`, groups.map(g => `${g.reason} (${g.members.length})`));
       res.json(groups);
     } catch (error) {
@@ -530,7 +535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!primaryId || !Array.isArray(duplicateIds) || duplicateIds.length === 0) {
         return res.status(400).json({ error: "primaryId and duplicateIds[] are required" });
       }
-      const merged = await storage.mergeMembers(primaryId, duplicateIds);
+      const merged = await storage.mergeMembers(req.scope!, primaryId, duplicateIds);
       res.json(merged);
     } catch (error: any) {
       console.error("Error merging members:", error);
@@ -551,7 +556,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         page: 1,
         limit: 1,
       };
-      const result = await storage.getMembers(criteria);
+      const result = await storage.getMembers(req.scope!, criteria);
       res.json({ count: result.total });
     } catch (error) {
       console.error("Error counting members by criteria:", error);
@@ -569,9 +574,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updates || Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No updates provided" });
       }
-      const ids = await storage.getMemberIdsByFilters(criteria);
+      const ids = await storage.getMemberIdsByFilters(req.scope!, criteria);
       if (ids.length === 0) return res.json({ updated: 0 });
-      await storage.bulkUpdateMembers(ids, updates);
+      await storage.bulkUpdateMembers(req.scope!, ids, updates);
       res.json({ updated: ids.length });
     } catch (error) {
       console.error("Error bulk updating members by criteria:", error);
@@ -602,7 +607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notAttendedSince: parseIntParam(req.query.notAttendedSince),
         archiveStatuses: archiveStatusesParam ? archiveStatusesParam.split(',').filter(Boolean) : undefined,
       };
-      const result = await storage.getMembers(filters);
+      const result = await storage.getMembers(req.scope!, filters);
       res.json(result);
     } catch (error) {
       console.error("Error fetching members:", error);
@@ -613,7 +618,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Slim member list for dropdowns and attendance (no expensive attendance subqueries)
   app.get("/api/members/list", isAuthenticated, requirePermission("members.view"), async (req, res) => {
     try {
-      const membersList = await storage.getMembersList();
+      const membersList = await storage.getMembersList(req.scope!);
       res.json(membersList);
     } catch (error) {
       console.error("Error fetching members list:", error);
@@ -624,7 +629,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CSV routes must come before :id route to prevent "export", "template", "import" from being matched as IDs
   app.get("/api/members/export", isAuthenticated, requirePermission("members.view"), async (req, res) => {
     try {
-      const result = await storage.getMembers({ page: 1, limit: 100000 });
+      const result = await storage.getMembers(req.scope!, { page: 1, limit: 100000 });
       const members = result.data;
       const csvData = stringify(members, {
         header: true,
@@ -700,14 +705,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!branchId || !branchId.trim()) {
         return res.status(400).json({ error: "Branch is required" });
       }
-
-      const csvData = req.file.buffer.toString("utf-8");
-      const records = parse(csvData, {
-        columns: true,
-        skip_empty_lines: true,
-        bom: true,
-        trim: true,
-      }) as Record<string, string>[];
+      if (req.scope!.role !== "super_admin" && branchId !== req.scope!.branchId) {
+        return res.status(400).json({ error: "You can only import members into your own branch" });
+      }
 
       const failures: { row: number; field: string; reason: string }[] = [];
 
@@ -739,10 +739,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       let imported = 0;
+      let total = 0;
+      let batch: { rowNum: number; data: ReturnType<typeof insertMemberSchema.parse> }[] = [];
+      const BATCH_SIZE = 300;
 
-      for (let i = 0; i < records.length; i++) {
-        const record = records[i];
-        const rowNum = i + 2; // row 1 is header
+      const flushBatch = async () => {
+        if (batch.length === 0) return;
+        try {
+          await storage.createMembersBatch(batch.map(b => b.data));
+          imported += batch.length;
+        } catch (err) {
+          // Rare (no unique constraints on this table) — fall back to
+          // per-row inserts for just this batch to isolate the bad row.
+          for (const { rowNum, data } of batch) {
+            try {
+              await storage.createMember(req.scope!, data);
+              imported++;
+            } catch (rowErr) {
+              const message = rowErr instanceof Error ? rowErr.message : String(rowErr);
+              failures.push({ row: rowNum, field: "Unknown", reason: message });
+            }
+          }
+        }
+        batch = [];
+      };
+
+      const parser = Readable.from(req.file.buffer).pipe(parse({
+        columns: true,
+        skip_empty_lines: true,
+        bom: true,
+        trim: true,
+      }));
+
+      let rowNum = 1; // row 1 is the header
+      for await (const record of parser as AsyncIterable<Record<string, string>>) {
+        rowNum++;
+        total++;
         const failuresBefore = failures.length;
 
         for (const { csvCol, label } of REQUIRED_FIELDS) {
@@ -783,8 +815,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
 
           const validatedData = insertMemberSchema.parse(memberData);
-          await storage.createMember(validatedData);
-          imported++;
+          batch.push({ rowNum, data: validatedData });
+          if (batch.length >= BATCH_SIZE) await flushBatch();
         } catch (err) {
           if (err instanceof ZodError) {
             for (const issue of err.issues) {
@@ -798,8 +830,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
+      await flushBatch();
 
-      res.json({ imported, total: records.length, failures });
+      res.json({ imported, total, failures });
     } catch (error) {
       console.error("Error importing members:", error);
       res.status(500).json({ error: "Failed to import members" });
@@ -812,10 +845,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { ids, selectAll, filters } = req.body;
       let targetIds: string[] = ids ?? [];
       if (selectAll && filters) {
-        targetIds = await storage.getMemberIdsByFilters(filters);
+        targetIds = await storage.getMemberIdsByFilters(req.scope!, filters);
       }
       if (targetIds.length === 0) return res.status(400).json({ error: "No members selected" });
-      await storage.bulkDeleteMembers(targetIds);
+      await storage.bulkDeleteMembers(req.scope!, targetIds);
       res.json({ deleted: targetIds.length });
     } catch (error) {
       console.error("Error bulk deleting members:", error);
@@ -832,10 +865,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       let targetIds: string[] = ids ?? [];
       if (selectAll && filters) {
-        targetIds = await storage.getMemberIdsByFilters(filters);
+        targetIds = await storage.getMemberIdsByFilters(req.scope!, filters);
       }
       if (targetIds.length === 0) return res.status(400).json({ error: "No members selected" });
-      await storage.bulkUpdateMembers(targetIds, updates);
+      await storage.bulkUpdateMembers(req.scope!, targetIds, updates);
       res.json({ updated: targetIds.length });
     } catch (error) {
       console.error("Error bulk updating members:", error);
@@ -846,7 +879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Parameterized routes must come after specific routes
   app.get("/api/members/:id", isAuthenticated, requirePermission("members.view"), async (req, res) => {
     try {
-      const member = await storage.getMemberById(req.params.id);
+      const member = await storage.getMemberById(req.scope!, req.params.id);
       if (!member) {
         return res.status(404).json({ error: "Member not found" });
       }
@@ -860,7 +893,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/members", isAuthenticated, requirePermission("members.create"), async (req, res) => {
     try {
       const validatedData = insertMemberSchema.parse(req.body);
-      const member = await storage.createMember(validatedData);
+      const member = await storage.createMember(req.scope!, validatedData);
       res.json(member);
     } catch (error: any) {
       console.error("Error creating member:", error);
@@ -871,7 +904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/members/:id", isAuthenticated, requirePermission("members.edit"), async (req, res) => {
     try {
       const validatedData = insertMemberSchema.partial().parse(req.body);
-      const member = await storage.updateMember(req.params.id, validatedData);
+      const member = await storage.updateMember(req.scope!, req.params.id, validatedData);
       res.json(member);
     } catch (error: any) {
       console.error("Error updating member:", error);
@@ -881,7 +914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/members/:id", isAuthenticated, requirePermission("members.delete"), async (req, res) => {
     try {
-      await storage.deleteMember(req.params.id);
+      await storage.deleteMember(req.scope!, req.params.id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting member:", error);
@@ -898,7 +931,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const seeingAgain = req.query.seeingAgain as string | undefined;
       const dateFrom = req.query.dateFrom as string | undefined;
       const dateTo = req.query.dateTo as string | undefined;
-      const result = await storage.getFirstTimers({ page, limit, search, seeingAgain, dateFrom, dateTo });
+      const result = await storage.getFirstTimers(req.scope!, { page, limit, search, seeingAgain, dateFrom, dateTo });
       res.json(result);
     } catch (error) {
       console.error("Error fetching first timers:", error);
@@ -911,7 +944,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("First timer submission received:", req.body);
       const validatedData = insertFirstTimerSchema.parse(req.body);
       console.log("Validation successful, creating first timer");
-      const firstTimer = await storage.createFirstTimer(validatedData);
+      const firstTimer = await storage.createFirstTimer(req.scope!, validatedData);
       console.log("First timer created:", firstTimer.id);
       res.json(firstTimer);
     } catch (error: any) {
@@ -923,7 +956,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/first-timers/:id", isAuthenticated, requirePermission("first_timers.create"), async (req, res) => {
     try {
-      const updated = await storage.updateFirstTimer(req.params.id, req.body);
+      const updated = await storage.updateFirstTimer(req.scope!, req.params.id, req.body);
       res.json(updated);
     } catch (error: any) {
       console.error("Error updating first timer:", error);
@@ -933,7 +966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/first-timers/:id/convert", isAuthenticated, requirePermission("first_timers.convert"), async (req, res) => {
     try {
-      const member = await storage.convertFirstTimerToMember(req.params.id);
+      const member = await storage.convertFirstTimerToMember(req.scope!, req.params.id);
       res.json(member);
     } catch (error: any) {
       console.error("Error converting first timer:", error);
@@ -943,7 +976,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/first-timers/export", isAuthenticated, requirePermission("first_timers.view"), async (req, res) => {
     try {
-      const { data: firstTimers } = await storage.getFirstTimers({ page: 1, limit: 100000 });
+      const { data: firstTimers } = await storage.getFirstTimers(req.scope!, { page: 1, limit: 100000 });
       const csvData = stringify(firstTimers, {
         header: true,
         columns: [
@@ -1010,14 +1043,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      const csvData = req.file.buffer.toString("utf-8");
-      const records = parse(csvData, {
-        columns: true,
-        skip_empty_lines: true,
-      });
+      const failures: { row: number; field: string; reason: string }[] = [];
+      const rowBranchId = req.scope!.role === "super_admin" ? undefined : req.scope!.branchId;
 
       let imported = 0;
-      for (const record of records as Record<string, string>[]) {
+      let total = 0;
+      let batch: { rowNum: number; data: ReturnType<typeof insertFirstTimerSchema.parse> }[] = [];
+      const BATCH_SIZE = 300;
+
+      const flushBatch = async () => {
+        if (batch.length === 0) return;
+        try {
+          await storage.createFirstTimersBatch(batch.map(b => b.data));
+          imported += batch.length;
+        } catch (err) {
+          for (const { rowNum, data } of batch) {
+            try {
+              await storage.createFirstTimer(req.scope!, data);
+              imported++;
+            } catch (rowErr) {
+              const message = rowErr instanceof Error ? rowErr.message : String(rowErr);
+              failures.push({ row: rowNum, field: "Unknown", reason: message });
+            }
+          }
+        }
+        batch = [];
+      };
+
+      const parser = Readable.from(req.file.buffer).pipe(parse({
+        columns: true,
+        skip_empty_lines: true,
+      }));
+
+      let rowNum = 1; // row 1 is the header
+      for await (const record of parser as AsyncIterable<Record<string, string>>) {
+        rowNum++;
+        total++;
         try {
           const enjoyedArray = (record["Enjoyed About Service"] || record.enjoyedAboutService || "")
             .split(",")
@@ -1039,17 +1100,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
             howHeardAbout: record["How Heard About"] || record.howHeardAbout,
             whoInvited: record["Who Invited"] || record.whoInvited || "",
             feedback: record["Feedback"] || record.feedback || "",
+            branchId: rowBranchId,
           };
 
           const validatedData = insertFirstTimerSchema.parse(firstTimerData);
-          await storage.createFirstTimer(validatedData);
-          imported++;
-        } catch (error) {
-          console.error("Error importing first timer:", error);
+          batch.push({ rowNum, data: validatedData });
+          if (batch.length >= BATCH_SIZE) await flushBatch();
+        } catch (err) {
+          if (err instanceof ZodError) {
+            for (const issue of err.issues) {
+              failures.push({ row: rowNum, field: String(issue.path[0] ?? "Unknown"), reason: issue.message });
+            }
+          } else {
+            const message = err instanceof Error ? err.message : String(err);
+            failures.push({ row: rowNum, field: "Unknown", reason: message });
+            console.error("Error importing first timer record:", err);
+          }
         }
       }
+      await flushBatch();
 
-      res.json({ success: true, imported });
+      res.json({ imported, total, failures });
     } catch (error) {
       console.error("Error importing first timers:", error);
       res.status(500).json({ error: "Failed to import first timers" });
@@ -1063,7 +1134,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!serviceDate) {
         return res.status(400).json({ error: "Service date is required" });
       }
-      const attendance = await storage.getAttendanceByDate(serviceDate);
+      const attendance = await storage.getAttendanceByDate(req.scope!, serviceDate);
       res.json(attendance);
     } catch (error) {
       console.error("Error fetching attendance:", error);
@@ -1076,6 +1147,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { memberId, serviceDate, status } = req.body;
       const validatedData = insertAttendanceSchema.parse({ memberId, serviceDate, status });
       const attendance = await storage.toggleAttendance(
+        req.scope!,
         validatedData.memberId,
         validatedData.serviceDate,
         validatedData.status
@@ -1093,7 +1165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!serviceDate || !status) {
         return res.status(400).json({ error: "Service date and status are required" });
       }
-      await storage.markAllPresentByStatus(serviceDate, status);
+      await storage.markAllPresentByStatus(req.scope!, serviceDate, status);
       res.json({ success: true });
     } catch (error) {
       console.error("Error marking all present:", error);
@@ -1130,42 +1202,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      const csvData = req.file.buffer.toString("utf-8");
-      const records = parse(csvData, {
+      // Load all members once before iterating CSV rows
+      const allMembers = await storage.getMembersList(req.scope!);
+      const failures: { row: number; field: string; reason: string }[] = [];
+
+      const parser = Readable.from(req.file.buffer).pipe(parse({
         columns: true,
         skip_empty_lines: true,
-      });
+      }));
 
-      // Load all members once before iterating CSV rows
-      const allMembers = await storage.getMembersList();
+      const entries: { memberId: string; serviceDate: string; status: string }[] = [];
+      let total = 0;
+      let rowNum = 1; // row 1 is the header
+      for await (const record of parser as AsyncIterable<Record<string, string>>) {
+        rowNum++;
+        total++;
+        const firstName = record["First Name"] || record.firstName;
+        const lastName = record["Last Name"] || record.lastName;
+        const mobilePhone = record["Mobile Phone"] || record.mobilePhone;
+        const serviceDate = record["Service Date"] || record.serviceDate;
+        const status = record["Status"] || record.status || "Present";
 
-      let imported = 0;
-      for (const record of records as Record<string, string>[]) {
-        try {
-          const firstName = record["First Name"] || record.firstName;
-          const lastName = record["Last Name"] || record.lastName;
-          const mobilePhone = record["Mobile Phone"] || record.mobilePhone;
-          const serviceDate = record["Service Date"] || record.serviceDate;
-          const status = record["Status"] || record.status || "Present";
+        // Find member by name and phone
+        const member = allMembers.find(
+          (m) =>
+            m.firstName === firstName &&
+            m.lastName === lastName &&
+            m.mobilePhone === mobilePhone
+        );
 
-          // Find member by name and phone
-          const member = allMembers.find(
-            (m) =>
-              m.firstName === firstName &&
-              m.lastName === lastName &&
-              m.mobilePhone === mobilePhone
-          );
-
-          if (member) {
-            await storage.toggleAttendance(member.id, serviceDate, status);
-            imported++;
-          }
-        } catch (error) {
-          console.error("Error importing attendance record:", error);
+        if (member) {
+          entries.push({ memberId: member.id, serviceDate, status });
+        } else {
+          failures.push({ row: rowNum, field: "Unknown", reason: "No matching member found by name and phone" });
         }
       }
 
-      res.json({ success: true, imported });
+      await storage.batchToggleAttendance(entries);
+
+      res.json({ imported: entries.length, total, failures });
     } catch (error) {
       console.error("Error importing attendance:", error);
       res.status(500).json({ error: "Failed to import attendance" });
@@ -1178,7 +1253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { assignedTo, status, memberId } = req.query;
       const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
       const limit = req.query.limit ? Math.min(parseInt(req.query.limit as string, 10), 200) : 25;
-      const result = await storage.getFollowUpTasks({
+      const result = await storage.getFollowUpTasks(req.scope!, {
         assignedTo: assignedTo as string,
         status: status as string,
         memberId: memberId as string,
@@ -1194,7 +1269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/follow-up-tasks/:id", isAuthenticated, requirePermission("follow_up_tasks.view"), async (req, res) => {
     try {
-      const task = await storage.getFollowUpTaskById(req.params.id);
+      const task = await storage.getFollowUpTaskById(req.scope!, req.params.id);
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
       }
@@ -1219,7 +1294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/follow-up-tasks/:id", isAuthenticated, requirePermission("follow_up_tasks.manage"), async (req, res) => {
     try {
       const validatedData = insertFollowUpTaskSchema.partial().parse(req.body);
-      const task = await storage.updateFollowUpTask(req.params.id, validatedData);
+      const task = await storage.updateFollowUpTask(req.scope!, req.params.id, validatedData);
       res.json(task);
     } catch (error: any) {
       console.error("Error updating follow-up task:", error);
@@ -1229,7 +1304,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/follow-up-tasks/:id", isAuthenticated, requirePermission("follow_up_tasks.manage"), async (req, res) => {
     try {
-      await storage.deleteFollowUpTask(req.params.id);
+      await storage.deleteFollowUpTask(req.scope!, req.params.id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting follow-up task:", error);
@@ -1239,7 +1314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/follow-up-tasks/:id/complete", isAuthenticated, requirePermission("follow_up_tasks.manage"), async (req, res) => {
     try {
-      const task = await storage.completeFollowUpTask(req.params.id);
+      const task = await storage.completeFollowUpTask(req.scope!, req.params.id);
       res.json(task);
     } catch (error) {
       console.error("Error completing follow-up task:", error);
@@ -1251,7 +1326,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/clusters", isAuthenticated, requirePermission("cells.view"), async (req, res) => {
     try {
       const branchId = req.query.branchId as string | undefined;
-      const clusterList = await storage.getClusters(branchId);
+      const clusterList = await storage.getClusters(req.scope!, branchId);
       res.json(clusterList);
     } catch (error) {
       console.error("Error fetching clusters:", error);
@@ -1261,7 +1336,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/clusters/:id", isAuthenticated, requirePermission("cells.view"), async (req, res) => {
     try {
-      const cluster = await storage.getClusterById(req.params.id);
+      const cluster = await storage.getClusterById(req.scope!, req.params.id);
       if (!cluster) {
         return res.status(404).json({ error: "Cluster not found" });
       }
@@ -1286,7 +1361,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/clusters/:id", isAuthenticated, requirePermission("branches.manage"), async (req, res) => {
     try {
       const validatedData = insertClusterSchema.partial().parse(req.body);
-      const cluster = await storage.updateCluster(req.params.id, validatedData);
+      const cluster = await storage.updateCluster(req.scope!, req.params.id, validatedData);
       res.json(cluster);
     } catch (error: any) {
       console.error("Error updating cluster:", error);
@@ -1296,7 +1371,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/clusters/:id", isAuthenticated, requirePermission("branches.manage"), async (req, res) => {
     try {
-      await storage.deleteCluster(req.params.id);
+      await storage.deleteCluster(req.scope!, req.params.id);
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting cluster:", error);
@@ -1308,7 +1383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/cells", isAuthenticated, requirePermission("cells.view"), async (req, res) => {
     try {
       const clusterId = req.query.clusterId as string | undefined;
-      const cells = await storage.getCells(clusterId);
+      const cells = await storage.getCells(req.scope!, clusterId);
       res.json(cells);
     } catch (error) {
       console.error("Error fetching cells:", error);
@@ -1318,7 +1393,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/cells/:id", isAuthenticated, requirePermission("cells.view"), async (req, res) => {
     try {
-      const cell = await storage.getCellById(req.params.id);
+      const cell = await storage.getCellById(req.scope!, req.params.id);
       if (!cell) {
         return res.status(404).json({ error: "Cell not found" });
       }
@@ -1343,7 +1418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/cells/:id", isAuthenticated, requirePermission("cells.manage"), async (req, res) => {
     try {
       const validatedData = insertCellSchema.partial().parse(req.body);
-      const cell = await storage.updateCell(req.params.id, validatedData);
+      const cell = await storage.updateCell(req.scope!, req.params.id, validatedData);
       res.json(cell);
     } catch (error: any) {
       console.error("Error updating cell:", error);
@@ -1353,7 +1428,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/cells/:id", isAuthenticated, requirePermission("cells.manage"), async (req, res) => {
     try {
-      await storage.deleteCell(req.params.id);
+      await storage.deleteCell(req.scope!, req.params.id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting cell:", error);
@@ -1365,7 +1440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/cells/:id/attendance", isAuthenticated, requirePermission("cells.view"), async (req, res) => {
     try {
       const meetingDate = req.query.meetingDate as string | undefined;
-      const attendance = await storage.getCellAttendance(req.params.id, meetingDate);
+      const attendance = await storage.getCellAttendance(req.scope!, req.params.id, meetingDate);
       res.json(attendance);
     } catch (error) {
       console.error("Error fetching cell attendance:", error);
@@ -1379,7 +1454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...req.body,
         cellId: req.params.id,
       });
-      const record = await storage.recordCellAttendance(validatedData);
+      const record = await storage.recordCellAttendance(req.scope!, validatedData);
       res.json(record);
     } catch (error: any) {
       console.error("Error recording cell attendance:", error);
@@ -1399,7 +1474,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/cell-attendance/:id", isAuthenticated, requirePermission("cells.manage"), async (req, res) => {
     try {
-      await storage.deleteCellAttendance(req.params.id);
+      await storage.deleteCellAttendance(req.scope!, req.params.id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting cell attendance:", error);
@@ -1499,7 +1574,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/user-roles", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
-      const validatedData = insertUserRoleSchema.parse(req.body);
+      const validatedData = roleAssignmentSchema.parse(req.body);
       const role = await storage.assignUserRole(validatedData);
       res.json(role);
 
@@ -1521,7 +1596,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/user-roles/:id", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
-      const validatedData = insertUserRoleSchema.partial().parse(req.body);
+      const validatedData = updateUserRoleSchema.parse(req.body);
       const role = await storage.updateUserRole(req.params.id, validatedData);
       res.json(role);
     } catch (error: any) {
@@ -1559,7 +1634,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all members (for reporting)
   app.get("/api/reporting/members", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const members = await storage.getMembers({});
+      const members = await storage.getMembers(req.scope!, {});
       res.json(members);
     } catch (error) {
       console.error("Error fetching members for reporting:", error);
@@ -1571,7 +1646,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/reporting/members", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
       const validatedData = insertMemberSchema.parse(req.body);
-      const member = await storage.createMember(validatedData);
+      const member = await storage.createMember(req.scope!, validatedData);
       res.status(201).json(member);
     } catch (error: any) {
       console.error("Error creating member via reporting API:", error);
@@ -1586,7 +1661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all first-timers (for reporting)
   app.get("/api/reporting/first-timers", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const firstTimers = await storage.getFirstTimers();
+      const firstTimers = await storage.getFirstTimers(req.scope!);
       res.json(firstTimers);
     } catch (error) {
       console.error("Error fetching first-timers for reporting:", error);
@@ -1598,7 +1673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/reporting/first-timers", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
       const validatedData = insertFirstTimerSchema.parse(req.body);
-      const firstTimer = await storage.createFirstTimer(validatedData);
+      const firstTimer = await storage.createFirstTimer(req.scope!, validatedData);
       res.status(201).json(firstTimer);
     } catch (error: any) {
       console.error("Error creating first-timer via reporting API:", error);
@@ -1613,7 +1688,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all attendance records (for reporting)
   app.get("/api/reporting/attendance", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const attendance = await storage.getAttendance({});
+      const attendance = await storage.getAttendance(req.scope!, {});
       res.json(attendance);
     } catch (error) {
       console.error("Error fetching attendance for reporting:", error);
@@ -1635,7 +1710,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all follow-up tasks (for reporting)
   app.get("/api/reporting/follow-up-tasks", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const tasks = await storage.getFollowUpTasks({});
+      const tasks = await storage.getFollowUpTasks(req.scope!, {});
       res.json(tasks);
     } catch (error) {
       console.error("Error fetching follow-up tasks for reporting:", error);
@@ -1646,7 +1721,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all cells (for reporting)
   app.get("/api/reporting/cells", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const cells = await storage.getCells();
+      const cells = await storage.getCells(req.scope!);
       res.json(cells);
     } catch (error) {
       console.error("Error fetching cells for reporting:", error);
@@ -1657,7 +1732,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET single cell by ID (for reporting)
   app.get("/api/reporting/cells/:id", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const cell = await storage.getCellById(req.params.id);
+      const cell = await storage.getCellById(req.scope!, req.params.id);
       if (!cell) return res.status(404).json({ error: "Cell not found" });
       res.json(cell);
     } catch (error) {
@@ -1681,7 +1756,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/reporting/cells/:id", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
       const validatedData = insertCellSchema.partial().parse(req.body);
-      const cell = await storage.updateCell(req.params.id, validatedData);
+      const cell = await storage.updateCell(req.scope!, req.params.id, validatedData);
       res.json(cell);
     } catch (error: any) {
       if (error.name === "ZodError") return res.status(400).json({ error: error.errors[0]?.message || "Invalid data" });
@@ -1692,7 +1767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all cell attendance (for reporting)
   app.get("/api/reporting/cell-attendance", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const cellAttendance = await storage.getAllCellAttendance();
+      const cellAttendance = await storage.getAllCellAttendance(req.scope!);
       res.json(cellAttendance);
     } catch (error) {
       console.error("Error fetching cell attendance for reporting:", error);
@@ -1761,7 +1836,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET all clusters (for reporting)
   app.get("/api/reporting/clusters", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const clusterList = await storage.getClusters();
+      const clusterList = await storage.getClusters(req.scope!);
       res.json(clusterList);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch clusters" });
@@ -1771,7 +1846,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET single cluster by ID (for reporting)
   app.get("/api/reporting/clusters/:id", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
-      const cluster = await storage.getClusterById(req.params.id);
+      const cluster = await storage.getClusterById(req.scope!, req.params.id);
       if (!cluster) return res.status(404).json({ error: "Cluster not found" });
       res.json(cluster);
     } catch (error) {
@@ -1795,7 +1870,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/reporting/clusters/:id", isAuthenticated, requireRole("super_admin"), async (req, res) => {
     try {
       const validatedData = insertClusterSchema.partial().parse(req.body);
-      const cluster = await storage.updateCluster(req.params.id, validatedData);
+      const cluster = await storage.updateCluster(req.scope!, req.params.id, validatedData);
       res.json(cluster);
     } catch (error: any) {
       if (error.name === "ZodError") return res.status(400).json({ error: error.errors[0]?.message || "Invalid data" });
@@ -1843,7 +1918,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const branchId = req.query.branchId as string | undefined;
       const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
       const limit = req.query.limit ? Math.min(parseInt(req.query.limit as string, 10), 200) : 50;
-      const result = await storage.getOutreach({ branchId, page, limit });
+      const result = await storage.getOutreach(req.scope!, { branchId, page, limit });
       res.json(result);
     } catch (error) {
       console.error("Error fetching outreach:", error);
@@ -1854,7 +1929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/outreach", isAuthenticated, requirePermission("outreach.manage"), async (req, res) => {
     try {
       const data = insertOutreachSchema.parse(req.body);
-      const record = await storage.createOutreach(data);
+      const record = await storage.createOutreach(req.scope!, data);
       res.status(201).json(record);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -1868,7 +1943,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/outreach/:id", isAuthenticated, requirePermission("outreach.manage"), async (req, res) => {
     try {
       const data = insertOutreachSchema.partial().parse(req.body);
-      const record = await storage.updateOutreach(req.params.id, data);
+      const record = await storage.updateOutreach(req.scope!, req.params.id, data);
       res.json(record);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -1881,7 +1956,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/outreach/:id", isAuthenticated, requirePermission("outreach.manage"), async (req, res) => {
     try {
-      await storage.deleteOutreach(req.params.id);
+      await storage.deleteOutreach(req.scope!, req.params.id);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete outreach record" });

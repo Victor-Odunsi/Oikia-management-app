@@ -9,11 +9,21 @@ import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
 import { storage } from "../../storage";
 import { pool } from "../../db";
+import { resolveUserScope } from "../../authz/scope";
 
 type UserRoleType = "super_admin" | "branch_admin" | "group_admin" | "cell_leader" | "branch_rep";
 
-const isLocalDev = !process.env.REPL_ID && process.env.NODE_ENV !== "production";
-const isPasswordOnlyAuth = !process.env.REPL_ID && process.env.NODE_ENV === "production";
+// Only two auth modes: Replit OIDC (when hosted on Replit) or password auth
+// via /api/signin — used for BOTH local development and production alike.
+// There is deliberately no separate no-credential dev path: seed a local
+// super_admin with `npx tsx --env-file=.env scripts/seed-super-admin.ts`
+// and sign in through the real form, so dev never exercises a different
+// code path than production does.
+const usesReplitOidc = !!process.env.REPL_ID;
+
+console.log(
+  `[auth] mode resolved: ${usesReplitOidc ? "replit-oidc" : "password"} (REPL_ID=${usesReplitOidc ? "set" : "unset"})`
+);
 
 const getOidcConfig = memoize(
   async () => {
@@ -41,7 +51,7 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: !isLocalDev,
+      secure: process.env.NODE_ENV === "production",
       maxAge: sessionTtl,
     },
   });
@@ -67,73 +77,22 @@ async function upsertUser(claims: any) {
   });
 }
 
-async function setupLocalDevAuth(app: Express) {
-  const devEmail = process.env.DEV_USER_EMAIL ?? "admin@waypoint.local";
-  const devUserId = "dev-local-user";
-
-  // Ensure dev user exists in DB
-  await authStorage.upsertUser({
-    id: devUserId,
-    email: devEmail,
-    firstName: "Dev",
-    lastName: "Admin",
-  });
-
-  // Ensure dev user has super_admin role
-  try {
-    const existingRole = await storage.getUserRole(devUserId);
-    if (!existingRole) {
-      await storage.assignUserRole({
-        userId: devUserId,
-        role: "super_admin",
-      });
-    }
-  } catch (_) {
-    // role may already exist — ignore
-  }
-
-  passport.serializeUser((user: Express.User, cb) => cb(null, user));
-  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
-
-  // Auto-login route for local dev
-  app.get("/api/login", (req, res) => {
-    const devUser = {
-      claims: { sub: devUserId, email: devEmail },
-      expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
-    };
-    req.login(devUser, (err) => {
-      if (err) return res.status(500).json({ message: "Login failed" });
-      res.redirect("/");
-    });
-  });
-
-  app.get("/api/logout", (req, res) => {
-    req.logout(() => res.redirect("/"));
-  });
-
-  console.log(`[dev] Local auth enabled. Auto-login as ${devEmail} at /api/login`);
-}
-
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
 
-  if (isLocalDev) {
-    await setupLocalDevAuth(app);
-    return;
-  }
-
-  if (isPasswordOnlyAuth) {
-    // No Replit OIDC — auth is handled by /api/signin and /api/signup routes.
-    // Just wire up passport session serialization and a logout route.
+  if (!usesReplitOidc) {
+    // No Replit OIDC — auth is handled by /api/signin and /api/signup routes,
+    // in every environment including local development. Bootstrap a local
+    // super_admin with scripts/seed-super-admin.ts, then sign in normally.
     passport.serializeUser((user: Express.User, cb) => cb(null, user));
     passport.deserializeUser((user: Express.User, cb) => cb(null, user));
     app.get("/api/logout", (req, res) => {
       req.logout(() => res.redirect("/"));
     });
-    console.log("[auth] Password-only auth mode (no Replit OIDC)");
+    console.log("[auth] Password auth mode (no Replit OIDC)");
     return;
   }
 
@@ -204,14 +163,7 @@ export async function setupAuth(app: Express) {
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
   const user = req.user as any;
 
-  if (isLocalDev) {
-    if (!req.isAuthenticated() || !user?.claims?.sub) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    return next();
-  }
-
-  if (!req.isAuthenticated() || !user.expires_at) {
+  if (!req.isAuthenticated() || !user?.expires_at) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
@@ -246,16 +198,17 @@ export const requireRole = (...allowedRoles: UserRoleType[]): RequestHandler => 
     }
 
     try {
-      const userRole = await storage.getUserRole(user.claims.sub);
+      const scope = await resolveUserScope(user.claims.sub);
 
-      if (!userRole) {
+      if (!scope) {
         return res.status(403).json({ message: "Forbidden: No role assigned" });
       }
 
-      if (!allowedRoles.includes(userRole.role as UserRoleType)) {
+      if (!allowedRoles.includes(scope.role as UserRoleType)) {
         return res.status(403).json({ message: "Forbidden: Insufficient permissions" });
       }
 
+      req.scope = scope;
       return next();
     } catch (error) {
       console.error("Error checking user role:", error);
@@ -291,24 +244,26 @@ export const requirePermission = (permission: string): RequestHandler => {
     }
 
     try {
-      const userRole = await storage.getUserRole(user.claims.sub);
+      const scope = await resolveUserScope(user.claims.sub);
 
-      if (!userRole) {
+      if (!scope) {
         return res.status(403).json({ message: "Forbidden: No role assigned" });
       }
 
       // super_admin always has full access
-      if (userRole.role === "super_admin") {
+      if (scope.role === "super_admin") {
+        req.scope = scope;
         return next();
       }
 
       const rolePermissions = await getCachedPermissions();
-      const rolePerms = rolePermissions[userRole.role] ?? [];
+      const rolePerms = rolePermissions[scope.role] ?? [];
 
       if (!rolePerms.includes(permission)) {
         return res.status(403).json({ message: `Forbidden: Missing permission '${permission}'` });
       }
 
+      req.scope = scope;
       return next();
     } catch (error) {
       console.error("Error checking permissions:", error);
