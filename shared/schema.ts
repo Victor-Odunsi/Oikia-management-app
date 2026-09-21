@@ -295,6 +295,33 @@ export const insertUserRoleSchema = createInsertSchema(userRoles, {
   updatedAt: true,
 });
 
+// Least-privilege guard: every role except super_admin must be scoped down to
+// where it actually operates, so a role can never be assigned with broader
+// (or accidentally zero) reach than its name implies. group_admin additionally
+// needs a cluster, and cell_leader additionally needs a cell.
+function requireRoleScope(
+  data: { role: string; branchId?: string | null; clusterId?: string | null; cellId?: string | null },
+  ctx: z.RefinementCtx,
+) {
+  if (data.role === "super_admin") return;
+  if (!data.branchId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branchId"], message: "A branch is required for this role" });
+  }
+  if (data.role === "group_admin" && !data.clusterId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["clusterId"], message: "Group Admin requires a cluster" });
+  }
+  if (data.role === "cell_leader" && !data.cellId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cellId"], message: "Cell Leader requires a cell" });
+  }
+}
+
+export const roleAssignmentSchema = insertUserRoleSchema.superRefine(requireRoleScope);
+
+export const updateUserRoleSchema = insertUserRoleSchema.partial().superRefine((data, ctx) => {
+  if (!data.role) return; // not changing the role in this update — nothing to re-validate
+  requireRoleScope(data as { role: string; branchId?: string | null; clusterId?: string | null; cellId?: string | null }, ctx);
+});
+
 export type Member = typeof members.$inferSelect;
 export type InsertMember = z.infer<typeof insertMemberSchema>;
 export type FirstTimer = typeof firstTimers.$inferSelect;

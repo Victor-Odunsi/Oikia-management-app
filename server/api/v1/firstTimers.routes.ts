@@ -30,7 +30,7 @@ firstTimersV1Router.get(
     try {
       const q = (req as any).validatedQuery as z.infer<typeof listQuerySchema>;
       const { from, to } = resolveDateRange(q);
-      const result = await storage.getFirstTimers({
+      const result = await storage.getFirstTimers(req.scope!, {
         page: q.page,
         limit: q.limit,
         search: q.search,
@@ -53,7 +53,7 @@ firstTimersV1Router.get(
   validateParams(z.object({ id: idParamSchema })),
   async (req, res) => {
     try {
-      const firstTimer = await storage.getFirstTimerById(req.params.id);
+      const firstTimer = await storage.getFirstTimerById(req.scope!, req.params.id);
       if (!firstTimer) return sendError(res, "NotFound", "First timer not found.");
       return sendSuccess(res, firstTimer);
     } catch (error) {
@@ -68,7 +68,7 @@ firstTimersV1Router.post(
   validateBody(insertFirstTimerSchema),
   async (req, res) => {
     try {
-      const firstTimer = await storage.createFirstTimer((req as any).validatedBody);
+      const firstTimer = await storage.createFirstTimer(req.scope!, (req as any).validatedBody);
       return sendSuccess(res, firstTimer, undefined, 201);
     } catch (error) {
       return handleRouteError(res, error, "Failed to create first timer.");
@@ -83,7 +83,7 @@ firstTimersV1Router.patch(
   validateBody(insertFirstTimerSchema.partial()),
   async (req, res) => {
     try {
-      const firstTimer = await storage.updateFirstTimer(req.params.id, (req as any).validatedBody);
+      const firstTimer = await storage.updateFirstTimer(req.scope!, req.params.id, (req as any).validatedBody);
       return sendSuccess(res, firstTimer);
     } catch (error) {
       return handleRouteError(res, error, "Failed to update first timer.");
@@ -97,7 +97,7 @@ firstTimersV1Router.post(
   validateParams(z.object({ id: idParamSchema })),
   async (req, res) => {
     try {
-      const member = await storage.convertFirstTimerToMember(req.params.id);
+      const member = await storage.convertFirstTimerToMember(req.scope!, req.params.id);
       return sendSuccess(res, member, undefined, 201);
     } catch (error) {
       return handleRouteError(res, error, "Failed to convert first timer to member.");

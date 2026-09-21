@@ -25,7 +25,16 @@ let pool: NeonPool | PgPoolInstance;
 if (process.env.DB_DRIVER === "pg") {
   // Standard PostgreSQL — Digital Ocean, Railway, etc.
   // ssl.rejectUnauthorized: false accepts DO's self-signed CA certificate.
-  pool = new PgPool({ connectionString, ssl: { rejectUnauthorized: false } });
+  // DB_POOL_MAX defaults to the driver's own default (10) so behavior is
+  // unchanged until this is deliberately tuned against the DB plan's actual
+  // connection ceiling — see the Phase 0 plan for how to size it.
+  pool = new PgPool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: parseInt(process.env.DB_POOL_MAX || "10", 10),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+  });
   db = pgDrizzle(pool as PgPoolInstance, { schema });
 } else {
   // Neon serverless (default for local dev)
@@ -33,5 +42,13 @@ if (process.env.DB_DRIVER === "pg") {
   pool = new NeonPool({ connectionString });
   db = neonDrizzle({ client: pool as NeonPool, schema });
 }
+
+// Without this handler, a dropped idle connection (DB restart, network blip)
+// is an unhandled 'error' event — an uncaught exception that crashes the
+// entire single-process app for every branch at once. Logging it here lets
+// the pool recover the connection on its own instead of taking the process down.
+pool.on("error", (err: Error) => {
+  console.error("[db] pool error (connection recovered automatically):", err);
+});
 
 export { pool, db };

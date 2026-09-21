@@ -252,7 +252,9 @@ export function ImportDialog({ type, open, onClose }: ImportDialogProps) {
                   data-testid="button-import-submit"
                 >
                   <Upload className="w-4 h-4 mr-2" />
-                  {stage === "importing" ? "Importing..." : "Import"}
+                  {stage === "importing"
+                    ? `Importing${recordCount ? ` ${recordCount} record${recordCount !== 1 ? "s" : ""}` : ""}…`
+                    : "Import"}
                 </Button>
               </>
             )}

@@ -16,7 +16,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import type { UserWithRole, Branch, UserRole } from "@shared/schema";
+import type { UserWithRole, Branch, UserRole, ClusterWithCells } from "@shared/schema";
 
 const roleLabels: Record<string, string> = {
   super_admin: "Super Admin (Senior Pastor)",
@@ -39,6 +39,17 @@ const roleFormSchema = z.object({
   branchId: z.string().optional(),
   clusterId: z.string().optional(),
   cellId: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.role === "super_admin") return;
+  if (!data.branchId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branchId"], message: "A branch is required for this role" });
+  }
+  if (data.role === "group_admin" && !data.clusterId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["clusterId"], message: "Group Admin requires a cluster" });
+  }
+  if (data.role === "cell_leader" && !data.cellId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cellId"], message: "Cell Leader requires a cell" });
+  }
 });
 
 type RoleFormData = z.infer<typeof roleFormSchema>;
@@ -57,6 +68,11 @@ export default function Users() {
 
   const { data: branches } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
+    enabled: isAuthenticated,
+  });
+
+  const { data: clusters } = useQuery<ClusterWithCells[]>({
+    queryKey: ["/api/clusters"],
     enabled: isAuthenticated,
   });
 
@@ -115,6 +131,11 @@ export default function Users() {
   });
 
   const watchedRole = form.watch("role");
+  const watchedBranchId = form.watch("branchId");
+  const watchedClusterId = form.watch("clusterId");
+
+  const clustersInBranch = clusters?.filter((c) => !watchedBranchId || c.branchId === watchedBranchId) ?? [];
+  const cellsInCluster = clusters?.find((c) => c.id === watchedClusterId)?.cells ?? [];
 
   const assignRoleMutation = useMutation({
     mutationFn: async (data: RoleFormData & { userId: string }) => {
@@ -362,7 +383,15 @@ export default function Users() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Assign to Branch</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <Select
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          // a cluster/cell chosen under the previous branch may not belong to this one
+                          form.setValue("clusterId", "");
+                          form.setValue("cellId", "");
+                        }}
+                        value={field.value}
+                      >
                         <FormControl>
                           <SelectTrigger data-testid="select-branch">
                             <SelectValue placeholder="Select a branch" />
@@ -372,6 +401,68 @@ export default function Users() {
                           {branches?.map((branch) => (
                             <SelectItem key={branch.id} value={branch.id}>
                               {branch.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {(watchedRole === "group_admin" || watchedRole === "cell_leader") && (
+                <FormField
+                  control={form.control}
+                  name="clusterId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Assign to Cluster</FormLabel>
+                      <Select
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          // a cell chosen under the previous cluster may not belong to this one
+                          form.setValue("cellId", "");
+                        }}
+                        value={field.value}
+                        disabled={!watchedBranchId}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-cluster">
+                            <SelectValue placeholder={watchedBranchId ? "Select a cluster" : "Select a branch first"} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {clustersInBranch.map((cluster) => (
+                            <SelectItem key={cluster.id} value={cluster.id}>
+                              {cluster.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {watchedRole === "cell_leader" && (
+                <FormField
+                  control={form.control}
+                  name="cellId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Assign to Cell</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value} disabled={!watchedClusterId}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-cell">
+                            <SelectValue placeholder={watchedClusterId ? "Select a cell" : "Select a cluster first"} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {cellsInCluster.map((cell) => (
+                            <SelectItem key={cell.id} value={cell.id}>
+                              {cell.name}
                             </SelectItem>
                           ))}
                         </SelectContent>

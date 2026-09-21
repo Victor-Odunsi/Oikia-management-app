@@ -34,7 +34,7 @@ membersV1Router.get(
     try {
       const q = (req as any).validatedQuery as z.infer<typeof listQuerySchema>;
       const { from, to } = resolveDateRange(q);
-      const result = await storage.getMembers({
+      const result = await storage.getMembers(req.scope!, {
         search: q.search,
         status: q.status,
         gender: q.gender,
@@ -60,7 +60,7 @@ membersV1Router.get(
   validateParams(z.object({ id: idParamSchema })),
   async (req, res) => {
     try {
-      const member = await storage.getMemberById(req.params.id);
+      const member = await storage.getMemberById(req.scope!, req.params.id);
       if (!member) return sendError(res, "NotFound", "Member not found.");
       return sendSuccess(res, member);
     } catch (error) {
@@ -75,7 +75,7 @@ membersV1Router.post(
   validateBody(insertMemberSchema),
   async (req, res) => {
     try {
-      const member = await storage.createMember((req as any).validatedBody);
+      const member = await storage.createMember(req.scope!, (req as any).validatedBody);
       return sendSuccess(res, member, undefined, 201);
     } catch (error) {
       return handleRouteError(res, error, "Failed to create member.");
@@ -90,7 +90,7 @@ membersV1Router.patch(
   validateBody(insertMemberSchema.partial()),
   async (req, res) => {
     try {
-      const member = await storage.updateMember(req.params.id, (req as any).validatedBody);
+      const member = await storage.updateMember(req.scope!, req.params.id, (req as any).validatedBody);
       return sendSuccess(res, member);
     } catch (error) {
       return handleRouteError(res, error, "Failed to update member.");
@@ -104,7 +104,7 @@ membersV1Router.delete(
   validateParams(z.object({ id: idParamSchema })),
   async (req, res) => {
     try {
-      await storage.deleteMember(req.params.id);
+      await storage.deleteMember(req.scope!, req.params.id);
       return sendSuccess(res, { deleted: true });
     } catch (error) {
       return handleRouteError(res, error, "Failed to delete member.");

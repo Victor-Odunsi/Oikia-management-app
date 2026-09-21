@@ -52,34 +52,38 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, sql, desc, inArray, asc, gt, gte, lte, ilike, or, isNull } from "drizzle-orm";
+import type { Scope } from "./authz/scope";
 
 export interface IStorage {
   // Members
-  getMembers(filters?: { status?: string; statuses?: string[]; gender?: string; occupation?: string; cluster?: string; search?: string; page?: number; limit?: number; minAttended?: number; maxAttended?: number; lastAttendedWithin?: number; notAttendedSince?: number; archiveStatuses?: string[]; sortBy?: "firstName" | "lastName" | "joinDate" | "status" | "createdAt" | "updatedAt"; sortOrder?: "asc" | "desc"; joinDateFrom?: string; joinDateTo?: string }): Promise<PaginatedResult<MemberWithAttendanceStats>>;
-  getMembersList(): Promise<MemberSlim[]>;
-  getMemberById(id: string): Promise<Member | undefined>;
-  createMember(member: InsertMember): Promise<Member>;
-  updateMember(id: string, member: Partial<InsertMember>): Promise<Member>;
-  deleteMember(id: string): Promise<void>;
-  bulkDeleteMembers(ids: string[]): Promise<void>;
-  bulkUpdateMembers(ids: string[], updates: Partial<InsertMember>): Promise<void>;
-  getMemberIdsByFilters(filters: { status?: string; statuses?: string[]; gender?: string; occupation?: string; cluster?: string; search?: string; minAttended?: number; maxAttended?: number; lastAttendedWithin?: number; notAttendedSince?: number; archiveStatuses?: string[] }): Promise<string[]>;
-  findDuplicates(): Promise<{ reason: string; members: Member[] }[]>;
-  mergeMembers(primaryId: string, duplicateIds: string[]): Promise<Member>;
+  getMembers(scope: Scope, filters?: { status?: string; statuses?: string[]; gender?: string; occupation?: string; cluster?: string; search?: string; page?: number; limit?: number; minAttended?: number; maxAttended?: number; lastAttendedWithin?: number; notAttendedSince?: number; archiveStatuses?: string[]; sortBy?: "firstName" | "lastName" | "joinDate" | "status" | "createdAt" | "updatedAt"; sortOrder?: "asc" | "desc"; joinDateFrom?: string; joinDateTo?: string }): Promise<PaginatedResult<MemberWithAttendanceStats>>;
+  getMembersList(scope: Scope): Promise<MemberSlim[]>;
+  getMemberById(scope: Scope, id: string): Promise<Member | undefined>;
+  createMember(scope: Scope, member: InsertMember): Promise<Member>;
+  createMembersBatch(rows: InsertMember[]): Promise<void>;
+  updateMember(scope: Scope, id: string, member: Partial<InsertMember>): Promise<Member>;
+  deleteMember(scope: Scope, id: string): Promise<void>;
+  bulkDeleteMembers(scope: Scope, ids: string[]): Promise<void>;
+  bulkUpdateMembers(scope: Scope, ids: string[], updates: Partial<InsertMember>): Promise<void>;
+  getMemberIdsByFilters(scope: Scope, filters: { status?: string; statuses?: string[]; gender?: string; occupation?: string; cluster?: string; search?: string; minAttended?: number; maxAttended?: number; lastAttendedWithin?: number; notAttendedSince?: number; archiveStatuses?: string[] }): Promise<string[]>;
+  findDuplicates(scope: Scope): Promise<{ reason: string; members: Member[] }[]>;
+  mergeMembers(scope: Scope, primaryId: string, duplicateIds: string[]): Promise<Member>;
 
   // First Timers
-  getFirstTimers(params?: { page?: number; limit?: number; search?: string; seeingAgain?: string; dateFrom?: string; dateTo?: string; sortBy?: "firstName" | "lastName" | "createdAt" | "seeingAgain"; sortOrder?: "asc" | "desc" }): Promise<PaginatedResult<FirstTimer>>;
-  getFirstTimerById(id: string): Promise<FirstTimer | undefined>;
-  createFirstTimer(firstTimer: InsertFirstTimer): Promise<FirstTimer>;
-  updateFirstTimer(id: string, data: Partial<InsertFirstTimer>): Promise<FirstTimer>;
-  convertFirstTimerToMember(id: string): Promise<Member>;
+  getFirstTimers(scope: Scope, params?: { page?: number; limit?: number; search?: string; seeingAgain?: string; dateFrom?: string; dateTo?: string; sortBy?: "firstName" | "lastName" | "createdAt" | "seeingAgain"; sortOrder?: "asc" | "desc" }): Promise<PaginatedResult<FirstTimer>>;
+  getFirstTimerById(scope: Scope, id: string): Promise<FirstTimer | undefined>;
+  createFirstTimer(scope: Scope, firstTimer: InsertFirstTimer): Promise<FirstTimer>;
+  createFirstTimersBatch(rows: InsertFirstTimer[]): Promise<void>;
+  updateFirstTimer(scope: Scope, id: string, data: Partial<InsertFirstTimer>): Promise<FirstTimer>;
+  convertFirstTimerToMember(scope: Scope, id: string): Promise<Member>;
 
   // Attendance
-  getAttendance(filters: { memberId?: string; serviceDate?: string }): Promise<Attendance[]>;
-  getAttendanceList(filters: { memberId?: string; status?: string; dateFrom?: string; dateTo?: string; page?: number; limit?: number }): Promise<PaginatedResult<Attendance>>;
-  getAttendanceByDate(serviceDate: string): Promise<Record<string, string>>;
-  toggleAttendance(memberId: string, serviceDate: string, status: string): Promise<Attendance>;
-  markAllPresentByStatus(serviceDate: string, status: string): Promise<void>;
+  getAttendance(scope: Scope, filters: { memberId?: string; serviceDate?: string }): Promise<Attendance[]>;
+  getAttendanceList(scope: Scope, filters: { memberId?: string; status?: string; dateFrom?: string; dateTo?: string; page?: number; limit?: number }): Promise<PaginatedResult<Attendance>>;
+  getAttendanceByDate(scope: Scope, serviceDate: string): Promise<Record<string, string>>;
+  toggleAttendance(scope: Scope, memberId: string, serviceDate: string, status: string): Promise<Attendance>;
+  markAllPresentByStatus(scope: Scope, serviceDate: string, status: string): Promise<void>;
+  batchToggleAttendance(entries: { memberId: string; serviceDate: string; status: string }[]): Promise<void>;
 
   // Stats
   getStats(): Promise<{
@@ -102,32 +106,32 @@ export interface IStorage {
   getCommunications(): Promise<Communication[]>;
   
   // Follow-up Tasks
-  getFollowUpTasks(filters?: { assignedTo?: string; status?: string; memberId?: string; page?: number; limit?: number }): Promise<PaginatedResult<FollowUpTaskWithMember>>;
-  getFollowUpTaskById(id: string): Promise<FollowUpTaskWithMember | undefined>;
+  getFollowUpTasks(scope: Scope, filters?: { assignedTo?: string; status?: string; memberId?: string; page?: number; limit?: number }): Promise<PaginatedResult<FollowUpTaskWithMember>>;
+  getFollowUpTaskById(scope: Scope, id: string): Promise<FollowUpTaskWithMember | undefined>;
   createFollowUpTask(task: InsertFollowUpTask): Promise<FollowUpTask>;
-  updateFollowUpTask(id: string, task: Partial<InsertFollowUpTask>): Promise<FollowUpTask>;
-  deleteFollowUpTask(id: string): Promise<void>;
-  completeFollowUpTask(id: string): Promise<FollowUpTask>;
-  
+  updateFollowUpTask(scope: Scope, id: string, task: Partial<InsertFollowUpTask>): Promise<FollowUpTask>;
+  deleteFollowUpTask(scope: Scope, id: string): Promise<void>;
+  completeFollowUpTask(scope: Scope, id: string): Promise<FollowUpTask>;
+
   // Clusters
-  getClusters(branchId?: string): Promise<ClusterWithCells[]>;
-  getClusterById(id: string): Promise<Cluster | undefined>;
+  getClusters(scope: Scope, branchId?: string): Promise<ClusterWithCells[]>;
+  getClusterById(scope: Scope, id: string): Promise<Cluster | undefined>;
   createCluster(cluster: InsertCluster): Promise<Cluster>;
-  updateCluster(id: string, cluster: Partial<InsertCluster>): Promise<Cluster>;
-  deleteCluster(id: string): Promise<void>;
+  updateCluster(scope: Scope, id: string, cluster: Partial<InsertCluster>): Promise<Cluster>;
+  deleteCluster(scope: Scope, id: string): Promise<void>;
 
   // Cells
-  getCells(clusterId?: string): Promise<CellWithMembers[]>;
-  getCellById(id: string): Promise<CellWithMembers | undefined>;
+  getCells(scope: Scope, clusterId?: string): Promise<CellWithMembers[]>;
+  getCellById(scope: Scope, id: string): Promise<CellWithMembers | undefined>;
   createCell(cell: InsertCell): Promise<Cell>;
-  updateCell(id: string, cell: Partial<InsertCell>): Promise<Cell>;
-  deleteCell(id: string): Promise<void>;
-  
+  updateCell(scope: Scope, id: string, cell: Partial<InsertCell>): Promise<Cell>;
+  deleteCell(scope: Scope, id: string): Promise<void>;
+
   // Cell Attendance
-  getCellAttendance(cellId: string, meetingDate?: string): Promise<CellAttendanceWithMember[]>;
-  getAllCellAttendance(): Promise<CellAttendance[]>;
-  recordCellAttendance(data: InsertCellAttendance): Promise<CellAttendance>;
-  deleteCellAttendance(id: string): Promise<void>;
+  getCellAttendance(scope: Scope, cellId: string, meetingDate?: string): Promise<CellAttendanceWithMember[]>;
+  getAllCellAttendance(scope: Scope): Promise<CellAttendance[]>;
+  recordCellAttendance(scope: Scope, data: InsertCellAttendance): Promise<CellAttendance>;
+  deleteCellAttendance(scope: Scope, id: string): Promise<void>;
   getCellMeetingDates(cellId: string): Promise<string[]>;
   
   // Branches
@@ -150,11 +154,11 @@ export interface IStorage {
   deleteUserRole(id: string): Promise<void>;
   
   // Outreach
-  getOutreach(params?: { branchId?: string; page?: number; limit?: number }): Promise<PaginatedResult<OutreachWithMemberStatus>>;
-  getOutreachById(id: string): Promise<Outreach | undefined>;
-  createOutreach(data: InsertOutreach): Promise<Outreach>;
-  updateOutreach(id: string, data: Partial<InsertOutreach>): Promise<Outreach>;
-  deleteOutreach(id: string): Promise<void>;
+  getOutreach(scope: Scope, params?: { branchId?: string; page?: number; limit?: number }): Promise<PaginatedResult<OutreachWithMemberStatus>>;
+  getOutreachById(scope: Scope, id: string): Promise<Outreach | undefined>;
+  createOutreach(scope: Scope, data: InsertOutreach): Promise<Outreach>;
+  updateOutreach(scope: Scope, id: string, data: Partial<InsertOutreach>): Promise<Outreach>;
+  deleteOutreach(scope: Scope, id: string): Promise<void>;
 
   // User signup + account management
   getUserById(id: string): Promise<User | undefined>;
@@ -243,7 +247,69 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
 };
 
 export class DatabaseStorage implements IStorage {
-  async getMembers(filters?: {
+  // --- Branch/cluster/cell scope helpers -----------------------------------
+  // Every non-super_admin role is confined to a branch (and, for
+  // group_admin/cell_leader, further to a cluster/cell). These helpers turn
+  // a Scope into the extra WHERE condition each query needs — undefined
+  // means "no extra restriction" (super_admin only).
+
+  private branchCondition(table: { branchId: any }, scope: Scope) {
+    return scope.role === "super_admin" ? undefined : eq(table.branchId, scope.branchId);
+  }
+
+  // Tables that only reference a member (attendance, follow_up_tasks,
+  // cell_attendance) don't have their own branchId — scope them via a
+  // subquery of member ids belonging to the scope's branch. null = unrestricted.
+  private memberScopeSubquery(scope: Scope) {
+    if (scope.role === "super_admin") return null;
+    return db.select({ id: members.id }).from(members).where(eq(members.branchId, scope.branchId));
+  }
+
+  // Condition on the clusters table: branch-scoped for branch_admin/branch_rep,
+  // narrowed to a single cluster for group_admin. undefined = unrestricted.
+  private clusterScopeCondition(scope: Scope) {
+    if (scope.role === "super_admin") return undefined;
+    if (scope.role === "group_admin" && scope.clusterId) return eq(clusters.id, scope.clusterId);
+    return eq(clusters.branchId, scope.branchId);
+  }
+
+  // For create-path writes: a scoped (non-super_admin) caller can never
+  // choose a different branch than their own, regardless of what the request
+  // body says.
+  private pinnedBranchId(scope: Scope, requestedBranchId: string | null | undefined): string | null | undefined {
+    return scope.role === "super_admin" ? requestedBranchId : scope.branchId;
+  }
+
+  // Condition on the cells table (joined with clusters) — narrowed to a
+  // single cell for cell_leader, a single cluster for group_admin, or the
+  // whole branch (via the joined clusters.branchId) otherwise.
+  private cellScopeCondition(scope: Scope) {
+    if (scope.role === "super_admin") return undefined;
+    if (scope.role === "cell_leader") return scope.cellId ? eq(cells.id, scope.cellId) : sql`false`;
+    if (scope.role === "group_admin" && scope.clusterId) return eq(cells.clusterId, scope.clusterId);
+    return eq(clusters.branchId, scope.branchId);
+  }
+
+  private async isCellInScope(cellId: string, scope: Scope): Promise<boolean> {
+    if (scope.role === "super_admin") return true;
+    const cond = this.cellScopeCondition(scope);
+    const [row] = await db.select({ id: cells.id }).from(cells)
+      .leftJoin(clusters, eq(cells.clusterId, clusters.id))
+      .where(cond ? and(eq(cells.id, cellId), cond) : eq(cells.id, cellId));
+    return !!row;
+  }
+
+  // Subquery of cluster ids the scope can manage — for cell mutations that
+  // don't join clusters directly. null = unrestricted.
+  private allowedClusterIdsSubquery(scope: Scope) {
+    if (scope.role === "super_admin") return null;
+    if (scope.role === "group_admin" && scope.clusterId) {
+      return db.select({ id: clusters.id }).from(clusters).where(eq(clusters.id, scope.clusterId));
+    }
+    return db.select({ id: clusters.id }).from(clusters).where(eq(clusters.branchId, scope.branchId));
+  }
+
+  async getMembers(scope: Scope, filters?: {
     status?: string;
     statuses?: string[];
     gender?: string;
@@ -267,6 +333,8 @@ export class DatabaseStorage implements IStorage {
     const offset = (page - 1) * limit;
 
     const conditions = [];
+    const scopeCond = this.branchCondition(members, scope);
+    if (scopeCond) conditions.push(scopeCond);
     if (filters?.statuses && filters.statuses.length > 0) {
       conditions.push(inArray(members.status, filters.statuses));
     } else if (filters?.status) {
@@ -417,8 +485,9 @@ export class DatabaseStorage implements IStorage {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async getMembersList(): Promise<MemberSlim[]> {
-    return await db
+  async getMembersList(scope: Scope): Promise<MemberSlim[]> {
+    const cond = this.branchCondition(members, scope);
+    const query = db
       .select({
         id: members.id,
         firstName: members.firstName,
@@ -431,43 +500,67 @@ export class DatabaseStorage implements IStorage {
       })
       .from(members)
       .orderBy(asc(members.firstName), asc(members.lastName));
+    return cond ? await query.where(cond) : await query;
   }
 
-  async getMemberById(id: string): Promise<Member | undefined> {
-    const [member] = await db.select().from(members).where(eq(members.id, id));
+  async getMemberById(scope: Scope, id: string): Promise<Member | undefined> {
+    const cond = this.branchCondition(members, scope);
+    const [member] = await db.select().from(members).where(cond ? and(eq(members.id, id), cond) : eq(members.id, id));
     return member || undefined;
   }
 
-  async createMember(insertMember: InsertMember): Promise<Member> {
-    const [member] = await db.insert(members).values(insertMember).returning();
-    return member;
-  }
-
-  async updateMember(id: string, updateData: Partial<InsertMember>): Promise<Member> {
+  async createMember(scope: Scope, insertMember: InsertMember): Promise<Member> {
     const [member] = await db
-      .update(members)
-      .set({ ...updateData, updatedAt: new Date() })
-      .where(eq(members.id, id))
+      .insert(members)
+      .values({ ...insertMember, branchId: this.pinnedBranchId(scope, insertMember.branchId) })
       .returning();
     return member;
   }
 
-  async deleteMember(id: string): Promise<void> {
-    await db.delete(members).where(eq(members.id, id));
+  async createMembersBatch(rows: InsertMember[]): Promise<void> {
+    if (rows.length === 0) return;
+    await db.insert(members).values(rows);
   }
 
-  async bulkDeleteMembers(ids: string[]): Promise<void> {
+  async updateMember(scope: Scope, id: string, updateData: Partial<InsertMember>): Promise<Member> {
+    const cond = this.branchCondition(members, scope);
+    const [member] = await db
+      .update(members)
+      .set({ ...updateData, updatedAt: new Date() })
+      .where(cond ? and(eq(members.id, id), cond) : eq(members.id, id))
+      .returning();
+    if (!member) throw new Error("Member not found");
+    return member;
+  }
+
+  async deleteMember(scope: Scope, id: string): Promise<void> {
+    const cond = this.branchCondition(members, scope);
+    const result = await db
+      .delete(members)
+      .where(cond ? and(eq(members.id, id), cond) : eq(members.id, id))
+      .returning({ id: members.id });
+    if (result.length === 0) throw new Error("Member not found");
+  }
+
+  async bulkDeleteMembers(scope: Scope, ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    await db.delete(members).where(inArray(members.id, ids));
+    const cond = this.branchCondition(members, scope);
+    await db.delete(members).where(cond ? and(inArray(members.id, ids), cond) : inArray(members.id, ids));
   }
 
-  async bulkUpdateMembers(ids: string[], updates: Partial<InsertMember>): Promise<void> {
+  async bulkUpdateMembers(scope: Scope, ids: string[], updates: Partial<InsertMember>): Promise<void> {
     if (ids.length === 0) return;
-    await db.update(members).set({ ...updates, updatedAt: new Date() }).where(inArray(members.id, ids));
+    const cond = this.branchCondition(members, scope);
+    await db
+      .update(members)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(cond ? and(inArray(members.id, ids), cond) : inArray(members.id, ids));
   }
 
-  async getMemberIdsByFilters(filters: { status?: string; statuses?: string[]; gender?: string; occupation?: string; cluster?: string; search?: string; minAttended?: number; maxAttended?: number; lastAttendedWithin?: number; notAttendedSince?: number; archiveStatuses?: string[] }): Promise<string[]> {
+  async getMemberIdsByFilters(scope: Scope, filters: { status?: string; statuses?: string[]; gender?: string; occupation?: string; cluster?: string; search?: string; minAttended?: number; maxAttended?: number; lastAttendedWithin?: number; notAttendedSince?: number; archiveStatuses?: string[] }): Promise<string[]> {
     const conditions = [];
+    const scopeCond = this.branchCondition(members, scope);
+    if (scopeCond) conditions.push(scopeCond);
     if (filters.statuses && filters.statuses.length > 0) {
       conditions.push(inArray(members.status, filters.statuses));
     } else if (filters.status) {
@@ -522,8 +615,9 @@ export class DatabaseStorage implements IStorage {
     return rows.map(r => r.id);
   }
 
-  async findDuplicates(): Promise<{ reason: string; members: Member[] }[]> {
-    const allMembers = await db.select().from(members);
+  async findDuplicates(scope: Scope): Promise<{ reason: string; members: Member[] }[]> {
+    const cond = this.branchCondition(members, scope);
+    const allMembers = cond ? await db.select().from(members).where(cond) : await db.select().from(members);
     const groups: { reason: string; members: Member[] }[] = [];
     const seenKeys = new Set<string>();
 
@@ -575,76 +669,94 @@ export class DatabaseStorage implements IStorage {
     return groups;
   }
 
-  async mergeMembers(primaryId: string, duplicateIds: string[]): Promise<Member> {
-    const primary = await this.getMemberById(primaryId);
-    if (!primary) throw new Error("Primary member not found");
+  async mergeMembers(scope: Scope, primaryId: string, duplicateIds: string[]): Promise<Member> {
+    // Wrapped in a transaction: a crash partway through must not leave
+    // duplicate records deleted with no audit trail, or reassigned but
+    // un-merged — everything below commits together or not at all.
+    return await db.transaction(async (tx) => {
+      const cond = this.branchCondition(members, scope);
 
-    const duplicates = (await Promise.all(duplicateIds.map(id => this.getMemberById(id)))).filter(Boolean) as Member[];
+      const [primary] = await tx.select().from(members)
+        .where(cond ? and(eq(members.id, primaryId), cond) : eq(members.id, primaryId));
+      if (!primary) throw new Error("Primary member not found");
 
-    // Fill empty fields on primary from duplicates (first non-empty value wins)
-    const mergeableFields: (keyof Member)[] = [
-      "email", "address", "dateOfBirth", "followUpWorker", "cell",
-      "followUpType", "archive", "branchId",
-    ];
-    const updates: Partial<InsertMember> = {};
-    for (const field of mergeableFields) {
-      if (!primary[field]) {
-        for (const dup of duplicates) {
-          if (dup[field]) {
-            (updates as any)[field] = dup[field];
-            break;
+      // Out-of-scope duplicateIds are silently dropped, not merged — no
+      // cross-branch merge is possible even if one is requested.
+      const duplicates = await tx.select().from(members)
+        .where(cond ? and(inArray(members.id, duplicateIds), cond) : inArray(members.id, duplicateIds));
+      const inScopeDupIds = new Set(duplicates.map(d => d.id));
+
+      // Fill empty fields on primary from duplicates (first non-empty value wins)
+      const mergeableFields: (keyof Member)[] = [
+        "email", "address", "dateOfBirth", "followUpWorker", "cell",
+        "followUpType", "archive", "branchId",
+      ];
+      const updates: Partial<InsertMember> = {};
+      for (const field of mergeableFields) {
+        if (!primary[field]) {
+          for (const dup of duplicates) {
+            if (dup[field]) {
+              (updates as any)[field] = dup[field];
+              break;
+            }
           }
         }
       }
-    }
 
-    // Append merge audit note
-    const mergeNote = `Merged from: ${duplicates.map(d => `${d.firstName} ${d.lastName}`).join(", ")} on ${new Date().toLocaleDateString()}`;
-    updates.summaryNotes = [primary.summaryNotes, mergeNote].filter(Boolean).join("\n");
+      // Append merge audit note
+      const mergeNote = `Merged from: ${duplicates.map(d => `${d.firstName} ${d.lastName}`).join(", ")} on ${new Date().toLocaleDateString()}`;
+      updates.summaryNotes = [primary.summaryNotes, mergeNote].filter(Boolean).join("\n");
 
-    // Re-assign related records for each duplicate
-    for (const dupId of duplicateIds) {
-      // Attendance: avoid date conflicts
-      const primaryAttendance = await db.select({ serviceDate: attendance.serviceDate, status: attendance.status })
-        .from(attendance).where(eq(attendance.memberId, primaryId));
-      const primaryDateSet = new Set(primaryAttendance.map(a => a.serviceDate));
+      // Re-assign related records for each in-scope duplicate
+      for (const dupId of duplicateIds) {
+        if (!inScopeDupIds.has(dupId)) continue;
 
-      const dupAttendance = await db.select().from(attendance).where(eq(attendance.memberId, dupId));
-      for (const a of dupAttendance) {
-        if (primaryDateSet.has(a.serviceDate)) {
-          await db.delete(attendance).where(eq(attendance.id, a.id));
-        } else {
-          await db.update(attendance).set({ memberId: primaryId }).where(eq(attendance.id, a.id));
-          primaryDateSet.add(a.serviceDate);
+        // Attendance: avoid date conflicts
+        const primaryAttendance = await tx.select({ serviceDate: attendance.serviceDate, status: attendance.status })
+          .from(attendance).where(eq(attendance.memberId, primaryId));
+        const primaryDateSet = new Set(primaryAttendance.map(a => a.serviceDate));
+
+        const dupAttendance = await tx.select().from(attendance).where(eq(attendance.memberId, dupId));
+        for (const a of dupAttendance) {
+          if (primaryDateSet.has(a.serviceDate)) {
+            await tx.delete(attendance).where(eq(attendance.id, a.id));
+          } else {
+            await tx.update(attendance).set({ memberId: primaryId }).where(eq(attendance.id, a.id));
+            primaryDateSet.add(a.serviceDate);
+          }
         }
+
+        // Follow-up tasks
+        await tx.update(followUpTasks).set({ memberId: primaryId }).where(eq(followUpTasks.memberId, dupId));
+
+        // Cell attendance: avoid same-date conflicts
+        const primaryCellAtt = await tx.select({ meetingDate: cellAttendance.meetingDate, cellId: cellAttendance.cellId })
+          .from(cellAttendance).where(eq(cellAttendance.memberId, primaryId));
+        const primaryCellDateSet = new Set(primaryCellAtt.map(a => `${a.cellId}:${a.meetingDate}`));
+
+        const dupCellAtt = await tx.select().from(cellAttendance).where(eq(cellAttendance.memberId, dupId));
+        for (const a of dupCellAtt) {
+          const key = `${a.cellId}:${a.meetingDate}`;
+          if (primaryCellDateSet.has(key)) {
+            await tx.delete(cellAttendance).where(eq(cellAttendance.id, a.id));
+          } else {
+            await tx.update(cellAttendance).set({ memberId: primaryId }).where(eq(cellAttendance.id, a.id));
+            primaryCellDateSet.add(key);
+          }
+        }
+
+        await tx.delete(members).where(eq(members.id, dupId));
       }
 
-      // Follow-up tasks
-      await db.update(followUpTasks).set({ memberId: primaryId }).where(eq(followUpTasks.memberId, dupId));
-
-      // Cell attendance: avoid same-date conflicts
-      const primaryCellAtt = await db.select({ meetingDate: cellAttendance.meetingDate, cellId: cellAttendance.cellId })
-        .from(cellAttendance).where(eq(cellAttendance.memberId, primaryId));
-      const primaryCellDateSet = new Set(primaryCellAtt.map(a => `${a.cellId}:${a.meetingDate}`));
-
-      const dupCellAtt = await db.select().from(cellAttendance).where(eq(cellAttendance.memberId, dupId));
-      for (const a of dupCellAtt) {
-        const key = `${a.cellId}:${a.meetingDate}`;
-        if (primaryCellDateSet.has(key)) {
-          await db.delete(cellAttendance).where(eq(cellAttendance.id, a.id));
-        } else {
-          await db.update(cellAttendance).set({ memberId: primaryId }).where(eq(cellAttendance.id, a.id));
-          primaryCellDateSet.add(key);
-        }
-      }
-
-      await this.deleteMember(dupId);
-    }
-
-    return await this.updateMember(primaryId, updates);
+      const [updatedPrimary] = await tx.update(members)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(members.id, primaryId))
+        .returning();
+      return updatedPrimary;
+    });
   }
 
-  async getFirstTimers(params?: {
+  async getFirstTimers(scope: Scope, params?: {
     page?: number;
     limit?: number;
     search?: string;
@@ -659,6 +771,8 @@ export class DatabaseStorage implements IStorage {
     const offset = (page - 1) * limit;
 
     const conditions = [];
+    const scopeCond = this.branchCondition(firstTimers, scope);
+    if (scopeCond) conditions.push(scopeCond);
     if (params?.search) {
       const term = `%${params.search}%`;
       conditions.push(
@@ -707,83 +821,102 @@ export class DatabaseStorage implements IStorage {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async getFirstTimerById(id: string): Promise<FirstTimer | undefined> {
-    const [firstTimer] = await db.select().from(firstTimers).where(eq(firstTimers.id, id));
+  async getFirstTimerById(scope: Scope, id: string): Promise<FirstTimer | undefined> {
+    const cond = this.branchCondition(firstTimers, scope);
+    const [firstTimer] = await db.select().from(firstTimers)
+      .where(cond ? and(eq(firstTimers.id, id), cond) : eq(firstTimers.id, id));
     return firstTimer || undefined;
   }
 
-  async createFirstTimer(insertFirstTimer: InsertFirstTimer): Promise<FirstTimer> {
-    const [firstTimer] = await db.insert(firstTimers).values(insertFirstTimer).returning();
+  async createFirstTimer(scope: Scope, insertFirstTimer: InsertFirstTimer): Promise<FirstTimer> {
+    const [firstTimer] = await db
+      .insert(firstTimers)
+      .values({ ...insertFirstTimer, branchId: this.pinnedBranchId(scope, insertFirstTimer.branchId) })
+      .returning();
     return firstTimer;
   }
 
-  async updateFirstTimer(id: string, data: Partial<InsertFirstTimer>): Promise<FirstTimer> {
+  async createFirstTimersBatch(rows: InsertFirstTimer[]): Promise<void> {
+    if (rows.length === 0) return;
+    await db.insert(firstTimers).values(rows);
+  }
+
+  async updateFirstTimer(scope: Scope, id: string, data: Partial<InsertFirstTimer>): Promise<FirstTimer> {
+    const cond = this.branchCondition(firstTimers, scope);
     const [updated] = await db
       .update(firstTimers)
       .set(data)
-      .where(eq(firstTimers.id, id))
+      .where(cond ? and(eq(firstTimers.id, id), cond) : eq(firstTimers.id, id))
       .returning();
     if (!updated) throw new Error("First timer not found");
     return updated;
   }
 
-  async convertFirstTimerToMember(id: string): Promise<Member> {
-    const firstTimer = await this.getFirstTimerById(id);
-    if (!firstTimer) {
-      throw new Error("First timer not found");
-    }
+  async convertFirstTimerToMember(scope: Scope, id: string): Promise<Member> {
+    // Wrapped in a transaction: creating the member and marking the
+    // first-timer converted must succeed or fail together, or a crash
+    // between the two leaves the first-timer stuck unconverted and a retry
+    // creates a second, unlinked duplicate member.
+    return await db.transaction(async (tx) => {
+      const cond = this.branchCondition(firstTimers, scope);
+      const [firstTimer] = await tx.select().from(firstTimers)
+        .where(cond ? and(eq(firstTimers.id, id), cond) : eq(firstTimers.id, id));
+      if (!firstTimer) {
+        throw new Error("First timer not found");
+      }
 
-    if (firstTimer.convertedToMember && firstTimer.memberId) {
-      throw new Error("First timer already converted");
-    }
+      if (firstTimer.convertedToMember && firstTimer.memberId) {
+        throw new Error("First timer already converted");
+      }
 
-    // Build summary notes from all first-timer data
-    const enjoyedServices = firstTimer.enjoyedAboutService?.join(", ") || "N/A";
-    const summaryParts = [
-      `Converted from first timer on ${new Date().toLocaleDateString()}.`,
-      `Based in city: ${firstTimer.basedInCity}.`,
-      `Seeing again: ${firstTimer.seeingAgain}.`,
-      `Enjoyed: ${enjoyedServices}.`,
-      `Heard about us via: ${firstTimer.howHeardAbout}.`,
-      `Invited by: ${firstTimer.whoInvited || "N/A"}.`,
-    ];
-    
-    if (firstTimer.feedback) {
-      summaryParts.push(`Feedback: ${firstTimer.feedback}`);
-    }
+      // Build summary notes from all first-timer data
+      const enjoyedServices = firstTimer.enjoyedAboutService?.join(", ") || "N/A";
+      const summaryParts = [
+        `Converted from first timer on ${new Date().toLocaleDateString()}.`,
+        `Based in city: ${firstTimer.basedInCity}.`,
+        `Seeing again: ${firstTimer.seeingAgain}.`,
+        `Enjoyed: ${enjoyedServices}.`,
+        `Heard about us via: ${firstTimer.howHeardAbout}.`,
+        `Invited by: ${firstTimer.whoInvited || "N/A"}.`,
+      ];
 
-    const newMember = await this.createMember({
-      firstName: firstTimer.firstName,
-      lastName: firstTimer.lastName,
-      gender: firstTimer.gender as "Male" | "Female",
-      mobilePhone: firstTimer.mobilePhone,
-      email: firstTimer.email || "",
-      address: firstTimer.address || "",
-      occupation: "Workers",
-      joinDate: new Date().toISOString().split("T")[0],
-      cluster: firstTimer.closestAxis,
-      followUpWorker: "",
-      cell: "",
-      status: "Crowd",
-      dateOfBirth: firstTimer.dateOfBirth || "",
-      followUpType: "General",
-      archive: undefined,
-      summaryNotes: summaryParts.join(" "),
-      branchId: firstTimer.branchId ?? undefined,
+      if (firstTimer.feedback) {
+        summaryParts.push(`Feedback: ${firstTimer.feedback}`);
+      }
+
+      const [newMember] = await tx.insert(members).values({
+        firstName: firstTimer.firstName,
+        lastName: firstTimer.lastName,
+        gender: firstTimer.gender as "Male" | "Female",
+        mobilePhone: firstTimer.mobilePhone,
+        email: firstTimer.email || "",
+        address: firstTimer.address || "",
+        occupation: "Workers",
+        joinDate: new Date().toISOString().split("T")[0],
+        cluster: firstTimer.closestAxis,
+        followUpWorker: "",
+        cell: "",
+        status: "Crowd",
+        dateOfBirth: firstTimer.dateOfBirth || "",
+        followUpType: "General",
+        archive: undefined,
+        summaryNotes: summaryParts.join(" "),
+        branchId: this.pinnedBranchId(scope, firstTimer.branchId),
+      }).returning();
+
+      await tx
+        .update(firstTimers)
+        .set({
+          convertedToMember: new Date(),
+          memberId: newMember.id,
+        })
+        .where(eq(firstTimers.id, id));
+
+      return newMember;
     });
-
-    await db
-      .update(firstTimers)
-      .set({
-        convertedToMember: new Date(),
-        memberId: newMember.id,
-      })
-      .where(eq(firstTimers.id, id));
-
-    return newMember;
   }
 
-  async getAttendance(filters: { memberId?: string; serviceDate?: string }): Promise<Attendance[]> {
+  async getAttendance(scope: Scope, filters: { memberId?: string; serviceDate?: string }): Promise<Attendance[]> {
     const conditions = [];
     if (filters.memberId) {
       conditions.push(eq(attendance.memberId, filters.memberId));
@@ -791,7 +924,9 @@ export class DatabaseStorage implements IStorage {
     if (filters.serviceDate) {
       conditions.push(eq(attendance.serviceDate, filters.serviceDate));
     }
-    
+    const memberScope = this.memberScopeSubquery(scope);
+    if (memberScope) conditions.push(inArray(attendance.memberId, memberScope));
+
     const query = db.select().from(attendance).orderBy(desc(attendance.serviceDate));
     if (conditions.length > 0) {
       return await query.where(and(...conditions));
@@ -802,7 +937,7 @@ export class DatabaseStorage implements IStorage {
   // Paginated attendance listing for the /api/v1 surface. Kept separate from
   // getAttendance() above (which the legacy /api/reporting/attendance route
   // returns verbatim as a bare array) so that response shape never changes.
-  async getAttendanceList(filters: {
+  async getAttendanceList(scope: Scope, filters: {
     memberId?: string;
     status?: string;
     dateFrom?: string;
@@ -819,6 +954,8 @@ export class DatabaseStorage implements IStorage {
     if (filters.status) conditions.push(eq(attendance.status, filters.status));
     if (filters.dateFrom) conditions.push(gte(attendance.serviceDate, filters.dateFrom));
     if (filters.dateTo) conditions.push(lte(attendance.serviceDate, filters.dateTo));
+    const memberScope = this.memberScopeSubquery(scope);
+    if (memberScope) conditions.push(inArray(attendance.memberId, memberScope));
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -836,11 +973,15 @@ export class DatabaseStorage implements IStorage {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async getAttendanceByDate(serviceDate: string): Promise<Record<string, string>> {
+  async getAttendanceByDate(scope: Scope, serviceDate: string): Promise<Record<string, string>> {
+    const memberScope = this.memberScopeSubquery(scope);
+    const cond = memberScope
+      ? and(eq(attendance.serviceDate, serviceDate), inArray(attendance.memberId, memberScope))
+      : eq(attendance.serviceDate, serviceDate);
     const records = await db
       .select()
       .from(attendance)
-      .where(eq(attendance.serviceDate, serviceDate));
+      .where(cond);
 
     const result: Record<string, string> = {};
     for (const record of records) {
@@ -850,10 +991,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async toggleAttendance(
+    scope: Scope,
     memberId: string,
     serviceDate: string,
     status: string
   ): Promise<Attendance> {
+    if (scope.role !== "super_admin") {
+      const [member] = await db.select({ branchId: members.branchId }).from(members).where(eq(members.id, memberId));
+      if (!member || member.branchId !== scope.branchId) {
+        throw new Error("Member not found");
+      }
+    }
+
     const existing = await db
       .select()
       .from(attendance)
@@ -875,11 +1024,12 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async markAllPresentByStatus(serviceDate: string, status: string): Promise<void> {
+  async markAllPresentByStatus(scope: Scope, serviceDate: string, status: string): Promise<void> {
+    const scopeCond = this.branchCondition(members, scope);
     const membersList = await db
       .select({ id: members.id })
       .from(members)
-      .where(eq(members.status, status));
+      .where(scopeCond ? and(eq(members.status, status), scopeCond) : eq(members.status, status));
 
     if (membersList.length === 0) return;
 
@@ -905,6 +1055,43 @@ export class DatabaseStorage implements IStorage {
       await db.insert(attendance).values(
         newMemberIds.map(memberId => ({ memberId, serviceDate, status: "Present" }))
       );
+    }
+  }
+
+  async batchToggleAttendance(entries: { memberId: string; serviceDate: string; status: string }[]): Promise<void> {
+    if (entries.length === 0) return;
+
+    // De-dupe within the batch on (memberId, serviceDate) — last write wins,
+    // matching sequential toggleAttendance semantics.
+    const dedupMap = new Map<string, { memberId: string; serviceDate: string; status: string }>();
+    for (const e of entries) dedupMap.set(`${e.memberId}:${e.serviceDate}`, e);
+    const deduped = Array.from(dedupMap.values());
+
+    const memberIds = Array.from(new Set(deduped.map(e => e.memberId)));
+    const existing = await db
+      .select({ id: attendance.id, memberId: attendance.memberId, serviceDate: attendance.serviceDate })
+      .from(attendance)
+      .where(inArray(attendance.memberId, memberIds));
+    const existingIdByKey = new Map(existing.map(a => [`${a.memberId}:${a.serviceDate}`, a.id]));
+
+    const toInsert: { memberId: string; serviceDate: string; status: string }[] = [];
+    const updateIdsByStatus = new Map<string, string[]>();
+    for (const e of deduped) {
+      const existingId = existingIdByKey.get(`${e.memberId}:${e.serviceDate}`);
+      if (existingId) {
+        if (!updateIdsByStatus.has(e.status)) updateIdsByStatus.set(e.status, []);
+        updateIdsByStatus.get(e.status)!.push(existingId);
+      } else {
+        toInsert.push(e);
+      }
+    }
+
+    // One batched UPDATE per distinct status value, one batched INSERT for the rest.
+    for (const [status, ids] of Array.from(updateIdsByStatus.entries())) {
+      await db.update(attendance).set({ status }).where(inArray(attendance.id, ids));
+    }
+    if (toInsert.length > 0) {
+      await db.insert(attendance).values(toInsert);
     }
   }
 
@@ -1032,7 +1219,7 @@ export class DatabaseStorage implements IStorage {
     return comms;
   }
 
-  async getFollowUpTasks(filters?: {
+  async getFollowUpTasks(scope: Scope, filters?: {
     assignedTo?: string;
     status?: string;
     memberId?: string;
@@ -1044,6 +1231,8 @@ export class DatabaseStorage implements IStorage {
     const offset = (page - 1) * limit;
 
     const conditions = [];
+    const scopeCond = this.branchCondition(members, scope);
+    if (scopeCond) conditions.push(scopeCond);
     if (filters?.assignedTo) {
       conditions.push(eq(followUpTasks.assignedTo, filters.assignedTo));
     }
@@ -1091,7 +1280,8 @@ export class DatabaseStorage implements IStorage {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async getFollowUpTaskById(id: string): Promise<FollowUpTaskWithMember | undefined> {
+  async getFollowUpTaskById(scope: Scope, id: string): Promise<FollowUpTaskWithMember | undefined> {
+    const scopeCond = this.branchCondition(members, scope);
     const [result] = await db
       .select({
         id: followUpTasks.id,
@@ -1109,7 +1299,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(followUpTasks)
       .innerJoin(members, eq(followUpTasks.memberId, members.id))
-      .where(eq(followUpTasks.id, id))
+      .where(scopeCond ? and(eq(followUpTasks.id, id), scopeCond) : eq(followUpTasks.id, id))
       .limit(1);
 
     return result;
@@ -1120,21 +1310,34 @@ export class DatabaseStorage implements IStorage {
     return newTask;
   }
 
-  async updateFollowUpTask(id: string, task: Partial<InsertFollowUpTask>): Promise<FollowUpTask> {
+  async updateFollowUpTask(scope: Scope, id: string, task: Partial<InsertFollowUpTask>): Promise<FollowUpTask> {
+    const memberScope = this.memberScopeSubquery(scope);
+    const cond = memberScope
+      ? and(eq(followUpTasks.id, id), inArray(followUpTasks.memberId, memberScope))
+      : eq(followUpTasks.id, id);
     const [updated] = await db
       .update(followUpTasks)
       .set({ ...task, updatedAt: sql`NOW()` })
-      .where(eq(followUpTasks.id, id))
+      .where(cond)
       .returning();
-
+    if (!updated) throw new Error("Follow-up task not found");
     return updated;
   }
 
-  async deleteFollowUpTask(id: string): Promise<void> {
-    await db.delete(followUpTasks).where(eq(followUpTasks.id, id));
+  async deleteFollowUpTask(scope: Scope, id: string): Promise<void> {
+    const memberScope = this.memberScopeSubquery(scope);
+    const cond = memberScope
+      ? and(eq(followUpTasks.id, id), inArray(followUpTasks.memberId, memberScope))
+      : eq(followUpTasks.id, id);
+    const result = await db.delete(followUpTasks).where(cond).returning({ id: followUpTasks.id });
+    if (result.length === 0) throw new Error("Follow-up task not found");
   }
 
-  async completeFollowUpTask(id: string): Promise<FollowUpTask> {
+  async completeFollowUpTask(scope: Scope, id: string): Promise<FollowUpTask> {
+    const memberScope = this.memberScopeSubquery(scope);
+    const cond = memberScope
+      ? and(eq(followUpTasks.id, id), inArray(followUpTasks.memberId, memberScope))
+      : eq(followUpTasks.id, id);
     const [completed] = await db
       .update(followUpTasks)
       .set({
@@ -1142,16 +1345,19 @@ export class DatabaseStorage implements IStorage {
         completedAt: sql`NOW()`,
         updatedAt: sql`NOW()`,
       })
-      .where(eq(followUpTasks.id, id))
+      .where(cond)
       .returning();
-
+    if (!completed) throw new Error("Follow-up task not found");
     return completed;
   }
 
   // Cluster methods
-  async getClusters(branchId?: string): Promise<ClusterWithCells[]> {
-    const clusterList = await (branchId
-      ? db.select().from(clusters).where(eq(clusters.branchId, branchId)).orderBy(clusters.name)
+  async getClusters(scope: Scope, branchId?: string): Promise<ClusterWithCells[]> {
+    // A scoped (non-super_admin) caller's own scope always wins over a
+    // caller-supplied branchId — it's an input, not something to trust.
+    const cond = this.clusterScopeCondition(scope) ?? (branchId ? eq(clusters.branchId, branchId) : undefined);
+    const clusterList = await (cond
+      ? db.select().from(clusters).where(cond).orderBy(clusters.name)
       : db.select().from(clusters).orderBy(clusters.name));
 
     if (clusterList.length === 0) return [];
@@ -1171,8 +1377,9 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getClusterById(id: string): Promise<Cluster | undefined> {
-    const [cluster] = await db.select().from(clusters).where(eq(clusters.id, id));
+  async getClusterById(scope: Scope, id: string): Promise<Cluster | undefined> {
+    const cond = this.clusterScopeCondition(scope);
+    const [cluster] = await db.select().from(clusters).where(cond ? and(eq(clusters.id, id), cond) : eq(clusters.id, id));
     return cluster || undefined;
   }
 
@@ -1181,16 +1388,22 @@ export class DatabaseStorage implements IStorage {
     return newCluster;
   }
 
-  async updateCluster(id: string, cluster: Partial<InsertCluster>): Promise<Cluster> {
+  async updateCluster(scope: Scope, id: string, cluster: Partial<InsertCluster>): Promise<Cluster> {
+    const cond = this.clusterScopeCondition(scope);
     const [updated] = await db
       .update(clusters)
       .set({ ...cluster, updatedAt: new Date() })
-      .where(eq(clusters.id, id))
+      .where(cond ? and(eq(clusters.id, id), cond) : eq(clusters.id, id))
       .returning();
+    if (!updated) throw new Error("Cluster not found");
     return updated;
   }
 
-  async deleteCluster(id: string): Promise<void> {
+  async deleteCluster(scope: Scope, id: string): Promise<void> {
+    const cond = this.clusterScopeCondition(scope);
+    const [cluster] = await db.select().from(clusters).where(cond ? and(eq(clusters.id, id), cond) : eq(clusters.id, id));
+    if (!cluster) throw new Error("Cluster not found");
+
     const [{ count }] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(cells)
@@ -1201,7 +1414,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(clusters).where(eq(clusters.id, id));
   }
 
-  async getCells(clusterId?: string): Promise<CellWithMembers[]> {
+  async getCells(scope: Scope, clusterId?: string): Promise<CellWithMembers[]> {
     const baseQuery = db
       .select({
         id: cells.id,
@@ -1215,8 +1428,14 @@ export class DatabaseStorage implements IStorage {
       .from(cells)
       .leftJoin(clusters, eq(cells.clusterId, clusters.id));
 
-    const cellList = await (clusterId
-      ? baseQuery.where(eq(cells.clusterId, clusterId)).orderBy(clusters.name, cells.name)
+    const conditions = [];
+    if (clusterId) conditions.push(eq(cells.clusterId, clusterId));
+    const scopeCond = this.cellScopeCondition(scope);
+    if (scopeCond) conditions.push(scopeCond);
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const cellList = await (whereClause
+      ? baseQuery.where(whereClause).orderBy(clusters.name, cells.name)
       : baseQuery.orderBy(clusters.name, cells.name));
 
     if (cellList.length === 0) return [];
@@ -1243,7 +1462,8 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getCellById(id: string): Promise<CellWithMembers | undefined> {
+  async getCellById(scope: Scope, id: string): Promise<CellWithMembers | undefined> {
+    const scopeCond = this.cellScopeCondition(scope);
     const [cell] = await db
       .select({
         id: cells.id,
@@ -1256,7 +1476,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(cells)
       .leftJoin(clusters, eq(cells.clusterId, clusters.id))
-      .where(eq(cells.id, id));
+      .where(scopeCond ? and(eq(cells.id, id), scopeCond) : eq(cells.id, id));
     if (!cell) return undefined;
 
     const cellMembers = await db
@@ -1277,20 +1497,29 @@ export class DatabaseStorage implements IStorage {
     return newCell;
   }
 
-  async updateCell(id: string, cell: Partial<InsertCell>): Promise<Cell> {
+  async updateCell(scope: Scope, id: string, cell: Partial<InsertCell>): Promise<Cell> {
+    const allowedClusters = this.allowedClusterIdsSubquery(scope);
+    const cond = allowedClusters ? and(eq(cells.id, id), inArray(cells.clusterId, allowedClusters)) : eq(cells.id, id);
     const [updated] = await db
       .update(cells)
       .set({ ...cell, updatedAt: new Date() })
-      .where(eq(cells.id, id))
+      .where(cond)
       .returning();
+    if (!updated) throw new Error("Cell not found");
     return updated;
   }
 
-  async deleteCell(id: string): Promise<void> {
-    await db.delete(cells).where(eq(cells.id, id));
+  async deleteCell(scope: Scope, id: string): Promise<void> {
+    const allowedClusters = this.allowedClusterIdsSubquery(scope);
+    const cond = allowedClusters ? and(eq(cells.id, id), inArray(cells.clusterId, allowedClusters)) : eq(cells.id, id);
+    const result = await db.delete(cells).where(cond).returning({ id: cells.id });
+    if (result.length === 0) throw new Error("Cell not found");
   }
 
-  async getCellAttendance(cellId: string, meetingDate?: string): Promise<CellAttendanceWithMember[]> {
+  async getCellAttendance(scope: Scope, cellId: string, meetingDate?: string): Promise<CellAttendanceWithMember[]> {
+    if (!(await this.isCellInScope(cellId, scope))) {
+      throw new Error("Cell not found");
+    }
     const conditions = [eq(cellAttendance.cellId, cellId)];
     if (meetingDate) {
       conditions.push(eq(cellAttendance.meetingDate, meetingDate));
@@ -1313,11 +1542,16 @@ export class DatabaseStorage implements IStorage {
     return records;
   }
 
-  async getAllCellAttendance(): Promise<CellAttendance[]> {
-    return await db.select().from(cellAttendance).orderBy(desc(cellAttendance.meetingDate));
+  async getAllCellAttendance(scope: Scope): Promise<CellAttendance[]> {
+    const memberScope = this.memberScopeSubquery(scope);
+    const query = db.select().from(cellAttendance).orderBy(desc(cellAttendance.meetingDate));
+    return memberScope ? await query.where(inArray(cellAttendance.memberId, memberScope)) : await query;
   }
 
-  async recordCellAttendance(data: InsertCellAttendance): Promise<CellAttendance> {
+  async recordCellAttendance(scope: Scope, data: InsertCellAttendance): Promise<CellAttendance> {
+    if (!(await this.isCellInScope(data.cellId, scope))) {
+      throw new Error("Cell not found");
+    }
     const existing = await db
       .select()
       .from(cellAttendance)
@@ -1337,8 +1571,15 @@ export class DatabaseStorage implements IStorage {
     return record;
   }
 
-  async deleteCellAttendance(id: string): Promise<void> {
-    await db.delete(cellAttendance).where(eq(cellAttendance.id, id));
+  async deleteCellAttendance(scope: Scope, id: string): Promise<void> {
+    if (scope.role !== "super_admin") {
+      const [record] = await db.select({ cellId: cellAttendance.cellId }).from(cellAttendance).where(eq(cellAttendance.id, id));
+      if (!record || !(await this.isCellInScope(record.cellId, scope))) {
+        throw new Error("Cell attendance record not found");
+      }
+    }
+    const result = await db.delete(cellAttendance).where(eq(cellAttendance.id, id)).returning({ id: cellAttendance.id });
+    if (result.length === 0) throw new Error("Cell attendance record not found");
   }
 
   async getCellMeetingDates(cellId: string): Promise<string[]> {
@@ -1469,12 +1710,12 @@ export class DatabaseStorage implements IStorage {
     await db.delete(userRoles).where(eq(userRoles.id, id));
   }
 
-  async getOutreach(params?: { branchId?: string; page?: number; limit?: number }): Promise<PaginatedResult<OutreachWithMemberStatus>> {
+  async getOutreach(scope: Scope, params?: { branchId?: string; page?: number; limit?: number }): Promise<PaginatedResult<OutreachWithMemberStatus>> {
     const page = params?.page ?? 1;
     const limit = params?.limit ?? 50;
     const offset = (page - 1) * limit;
 
-    const whereClause = params?.branchId ? eq(outreach.branchId, params.branchId) : undefined;
+    const whereClause = this.branchCondition(outreach, scope) ?? (params?.branchId ? eq(outreach.branchId, params.branchId) : undefined);
 
     const [{ total }] = await db
       .select({ total: sql<number>`COUNT(*)::int` })
@@ -1511,27 +1752,38 @@ export class DatabaseStorage implements IStorage {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async getOutreachById(id: string): Promise<Outreach | undefined> {
-    const [record] = await db.select().from(outreach).where(eq(outreach.id, id));
+  async getOutreachById(scope: Scope, id: string): Promise<Outreach | undefined> {
+    const cond = this.branchCondition(outreach, scope);
+    const [record] = await db.select().from(outreach).where(cond ? and(eq(outreach.id, id), cond) : eq(outreach.id, id));
     return record;
   }
 
-  async createOutreach(data: InsertOutreach): Promise<Outreach> {
-    const [record] = await db.insert(outreach).values(data).returning();
-    return record;
-  }
-
-  async updateOutreach(id: string, data: Partial<InsertOutreach>): Promise<Outreach> {
+  async createOutreach(scope: Scope, data: InsertOutreach): Promise<Outreach> {
     const [record] = await db
-      .update(outreach)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(outreach.id, id))
+      .insert(outreach)
+      .values({ ...data, branchId: this.pinnedBranchId(scope, data.branchId) })
       .returning();
     return record;
   }
 
-  async deleteOutreach(id: string): Promise<void> {
-    await db.delete(outreach).where(eq(outreach.id, id));
+  async updateOutreach(scope: Scope, id: string, data: Partial<InsertOutreach>): Promise<Outreach> {
+    const cond = this.branchCondition(outreach, scope);
+    const [record] = await db
+      .update(outreach)
+      .set({ ...data, updatedAt: new Date() })
+      .where(cond ? and(eq(outreach.id, id), cond) : eq(outreach.id, id))
+      .returning();
+    if (!record) throw new Error("Outreach record not found");
+    return record;
+  }
+
+  async deleteOutreach(scope: Scope, id: string): Promise<void> {
+    const cond = this.branchCondition(outreach, scope);
+    const result = await db
+      .delete(outreach)
+      .where(cond ? and(eq(outreach.id, id), cond) : eq(outreach.id, id))
+      .returning({ id: outreach.id });
+    if (result.length === 0) throw new Error("Outreach record not found");
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {

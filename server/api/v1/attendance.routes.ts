@@ -28,7 +28,7 @@ attendanceV1Router.get(
     try {
       const q = (req as any).validatedQuery as z.infer<typeof listQuerySchema>;
       const { from, to } = resolveDateRange(q);
-      const result = await storage.getAttendanceList({
+      const result = await storage.getAttendanceList(req.scope!, {
         memberId: q.member_id,
         status: q.status,
         dateFrom: from,
@@ -52,7 +52,7 @@ attendanceV1Router.post(
   async (req, res) => {
     try {
       const { memberId, serviceDate, status } = (req as any).validatedBody;
-      const record = await storage.toggleAttendance(memberId, serviceDate, status);
+      const record = await storage.toggleAttendance(req.scope!, memberId, serviceDate, status);
       return sendSuccess(res, record, undefined, 201);
     } catch (error) {
       return handleRouteError(res, error, "Failed to record attendance.");
