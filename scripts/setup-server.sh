@@ -35,7 +35,7 @@ if [ -d "$APP_DIR/.git" ]; then
 else
   echo "Cloning fresh checkout..."
   sudo mkdir -p "$APP_DIR"
-  sudo chown "$USER" "$APP_DIR"
+  sudo chown "$(whoami)" "$APP_DIR"
   git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
   cd "$APP_DIR"
 fi
