@@ -112,7 +112,7 @@ export default function Users() {
               You need to be signed in to access user management.
             </p>
             <Button asChild data-testid="button-login-users">
-              <a href="/api/login">Sign In</a>
+              <a href="/">Sign In</a>
             </Button>
           </CardContent>
         </Card>

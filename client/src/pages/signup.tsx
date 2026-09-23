@@ -94,7 +94,7 @@ export default function Signup() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Button asChild variant="outline" data-testid="button-back-to-login">
-              <Link href="/api/login">
+              <Link href="/">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Login
               </Link>
@@ -267,7 +267,7 @@ export default function Signup() {
 
               <div className="text-center text-sm text-muted-foreground">
                 Already have an account?{" "}
-                <a href="/api/login" className="text-primary hover:underline" data-testid="link-login">
+                <a href="/" className="text-primary hover:underline" data-testid="link-login">
                   Log in here
                 </a>
               </div>

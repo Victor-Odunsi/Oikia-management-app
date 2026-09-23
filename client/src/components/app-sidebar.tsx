@@ -203,7 +203,7 @@ export function AppSidebar() {
         ) : (
           <div className="flex flex-col gap-2">
             <Button asChild className="w-full" data-testid="button-login">
-              <a href="/api/login">Log In</a>
+              <a href="/">Log In</a>
             </Button>
             <Button asChild variant="outline" className="w-full" data-testid="button-signup">
               <Link href="/signup">Sign Up</Link>
