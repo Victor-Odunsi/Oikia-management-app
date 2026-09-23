@@ -114,7 +114,7 @@ export default function Branches() {
               You need to be signed in to access branch management.
             </p>
             <Button asChild data-testid="button-login-branches">
-              <a href="/api/login">Sign In</a>
+              <a href="/">Sign In</a>
             </Button>
           </CardContent>
         </Card>

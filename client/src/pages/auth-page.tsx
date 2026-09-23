@@ -225,11 +225,11 @@ function SignupForm() {
           Registration Submitted
         </h3>
         <p className="text-sm text-gray-500 max-w-xs">
-          Your account has been created. An administrator will review your registration and assign
-          you access.
+          Your account has been created. You already have branch representative access — sign in
+          to get started.
         </p>
         <a
-          href="/api/login"
+          href="/"
           className="mt-2 text-sm font-semibold hover:underline"
           style={{ color: "#F7821B" }}
         >
