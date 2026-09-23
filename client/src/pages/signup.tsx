@@ -63,7 +63,7 @@ export default function Signup() {
       setIsSuccess(true);
       toast({
         title: "Registration Successful",
-        description: "Your account has been created. Please wait for admin approval.",
+        description: "Your account has been created. You can sign in right away.",
       });
     },
     onError: (error: Error) => {
@@ -89,7 +89,7 @@ export default function Signup() {
             </div>
             <CardTitle className="text-2xl">Registration Complete</CardTitle>
             <CardDescription>
-              Your account has been created successfully. An administrator will review your registration and assign you appropriate access.
+              Your account has been created successfully. Sign in now — you already have branch representative access for your branch.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
