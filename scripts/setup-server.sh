@@ -6,9 +6,9 @@
 #   e.g. ./setup-server.sh https://github.com/Victor-Odunsi/Oikia-management-app.git sandbox
 #
 # Does NOT create /opt/app/.env for you — that must be created once, by
-# hand, on the server itself, and must never be committed. See ecosystem.config.js
+# hand, on the server itself, and must never be committed. See ecosystem.config.cjs
 # for what it needs to contain (DATABASE_URL, SESSION_SECRET, ENCRYPTION_KEY,
-# DB_DRIVER=pg, on top of what's already set in ecosystem.config.js's env block).
+# DB_DRIVER=pg, on top of what's already set in ecosystem.config.cjs's env block).
 set -euo pipefail
 
 REPO_URL="${1:?Usage: $0 <git-remote-url> <branch>}"
@@ -50,9 +50,9 @@ npm ci
 npm run build
 
 if pm2 describe occwaypoint >/dev/null 2>&1; then
-  pm2 reload ecosystem.config.js
+  pm2 reload ecosystem.config.cjs
 else
-  pm2 start ecosystem.config.js
+  pm2 start ecosystem.config.cjs
   pm2 save
   echo "Run the command 'pm2 startup' printed above (once) so PM2 survives a reboot."
 fi
