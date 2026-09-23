@@ -434,10 +434,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Analytics endpoints
-  app.get("/api/analytics/attendance-trends", isAuthenticated, async (req, res) => {
+  // Not gated by requirePermission (every role that can view its own
+  // members/attendance should see its own reports); scope is resolved
+  // directly and threaded into every underlying query instead, same as
+  // /api/branches above.
+  app.get("/api/analytics/attendance-trends", isAuthenticated, async (req: any, res) => {
     try {
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.json([]);
       const days = req.query.days ? parseInt(req.query.days as string) : 30;
-      const trends = await storage.getAttendanceTrends(days);
+      const trends = await storage.getAttendanceTrends(scope, days);
       res.json(trends);
     } catch (error) {
       console.error("Error fetching attendance trends:", error);
@@ -445,9 +451,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/analytics/status-distribution", isAuthenticated, async (req, res) => {
+  app.get("/api/analytics/status-distribution", isAuthenticated, async (req: any, res) => {
     try {
-      const distribution = await storage.getMemberStatusDistribution();
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.json([]);
+      const distribution = await storage.getMemberStatusDistribution(scope);
       res.json(distribution);
     } catch (error) {
       console.error("Error fetching status distribution:", error);
@@ -455,9 +463,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/analytics/recent-activity", isAuthenticated, async (req, res) => {
+  app.get("/api/analytics/recent-activity", isAuthenticated, async (req: any, res) => {
     try {
-      const activity = await storage.getRecentActivity();
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.json({ recentMembers: [], recentFirstTimers: [] });
+      const activity = await storage.getRecentActivity(scope);
       res.json(activity);
     } catch (error) {
       console.error("Error fetching recent activity:", error);
@@ -465,9 +475,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/analytics/executive-summary", isAuthenticated, async (req, res) => {
+  app.get("/api/analytics/executive-summary", isAuthenticated, async (req: any, res) => {
     try {
-      const data = await storage.getExecutiveSummary();
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.status(403).json({ error: "No role assigned" });
+      const data = await storage.getExecutiveSummary(scope);
       res.json(data);
     } catch (error) {
       console.error("Error fetching executive summary:", error);
@@ -475,9 +487,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/analytics/first-timer-analysis", isAuthenticated, async (req, res) => {
+  app.get("/api/analytics/first-timer-analysis", isAuthenticated, async (req: any, res) => {
     try {
-      const data = await storage.getFirstTimerAnalysis();
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.status(403).json({ error: "No role assigned" });
+      const data = await storage.getFirstTimerAnalysis(scope);
       res.json(data);
     } catch (error) {
       console.error("Error fetching first timer analysis:", error);
@@ -485,9 +499,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/analytics/cell-attendance-analysis", isAuthenticated, async (req, res) => {
+  app.get("/api/analytics/cell-attendance-analysis", isAuthenticated, async (req: any, res) => {
     try {
-      const data = await storage.getCellAttendanceAnalysis();
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.status(403).json({ error: "No role assigned" });
+      const data = await storage.getCellAttendanceAnalysis(scope);
       res.json(data);
     } catch (error) {
       console.error("Error fetching cell attendance analysis:", error);

@@ -94,9 +94,9 @@ export interface IStorage {
   }>;
   
   // Analytics
-  getAttendanceTrends(days?: number): Promise<{ date: string; present: number; total: number }[]>;
-  getMemberStatusDistribution(): Promise<{ status: string; count: number }[]>;
-  getRecentActivity(): Promise<{
+  getAttendanceTrends(scope: Scope, days?: number): Promise<{ date: string; present: number; total: number }[]>;
+  getMemberStatusDistribution(scope: Scope): Promise<{ status: string; count: number }[]>;
+  getRecentActivity(scope: Scope): Promise<{
     recentMembers: Member[];
     recentFirstTimers: FirstTimer[];
   }>;
@@ -185,7 +185,7 @@ export interface IStorage {
   upsertEmailTemplate(name: string, data: { subject: string; htmlContent: string }): Promise<EmailTemplate>;
 
   // Reports
-  getExecutiveSummary(): Promise<{
+  getExecutiveSummary(scope: Scope): Promise<{
     membersByStatus: { status: string; count: number }[];
     memberGrowth: { month: string; count: number }[];
     attendanceTrend: { date: string; present: number; total: number }[];
@@ -195,7 +195,7 @@ export interface IStorage {
     genderDistribution: { gender: string; count: number }[];
     clusterAttendance: { clusterName: string; totalAttendance: number }[];
   }>;
-  getFirstTimerAnalysis(): Promise<{
+  getFirstTimerAnalysis(scope: Scope): Promise<{
     conversionStats: {
       convertedThisQuarter: number;
       totalThisQuarter: number;
@@ -210,7 +210,7 @@ export interface IStorage {
     howHeardAbout: { source: string; count: number }[];
     enjoyedAboutService: { aspect: string; count: number }[];
   }>;
-  getCellAttendanceAnalysis(): Promise<{
+  getCellAttendanceAnalysis(scope: Scope): Promise<{
     attendanceTrend: { date: string; count: number }[];
     topCells: { cellName: string; clusterName: string; totalAttendance: number; avgPerMeeting: number }[];
     clusterComparison: { clusterName: string; totalAttendance: number; cellCount: number; avgPerMeeting: number }[];
@@ -1140,13 +1140,20 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getAttendanceTrends(days: number = 30): Promise<{ date: string; present: number; total: number }[]> {
+  async getAttendanceTrends(scope: Scope, days: number = 30): Promise<{ date: string; present: number; total: number }[]> {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(endDate.getDate() - days);
-    
+
     const startDateStr = startDate.toISOString().split("T")[0];
     const endDateStr = endDate.toISOString().split("T")[0];
+
+    const memberScope = this.memberScopeSubquery(scope);
+    const conditions = [
+      sql`${attendance.serviceDate} >= ${startDateStr}`,
+      sql`${attendance.serviceDate} <= ${endDateStr}`,
+    ];
+    if (memberScope) conditions.push(inArray(attendance.memberId, memberScope));
 
     const trends = await db
       .select({
@@ -1155,44 +1162,42 @@ export class DatabaseStorage implements IStorage {
         total: sql<number>`COUNT(*)::int`,
       })
       .from(attendance)
-      .where(
-        and(
-          sql`${attendance.serviceDate} >= ${startDateStr}`,
-          sql`${attendance.serviceDate} <= ${endDateStr}`
-        )
-      )
+      .where(and(...conditions))
       .groupBy(attendance.serviceDate)
       .orderBy(attendance.serviceDate);
 
     return trends;
   }
 
-  async getMemberStatusDistribution(): Promise<{ status: string; count: number }[]> {
+  async getMemberStatusDistribution(scope: Scope): Promise<{ status: string; count: number }[]> {
     const distribution = await db
       .select({
         status: members.status,
         count: sql<number>`COUNT(*)::int`,
       })
       .from(members)
+      .where(this.branchCondition(members, scope))
       .groupBy(members.status);
 
     return distribution;
   }
 
-  async getRecentActivity(): Promise<{
+  async getRecentActivity(scope: Scope): Promise<{
     recentMembers: Member[];
     recentFirstTimers: FirstTimer[];
   }> {
     const recentMembers = await db
       .select()
       .from(members)
+      .where(this.branchCondition(members, scope))
       .orderBy(desc(members.createdAt))
       .limit(5);
 
+    const ftCond = this.branchCondition(firstTimers, scope);
     const recentFirstTimers = await db
       .select()
       .from(firstTimers)
-      .where(sql`${firstTimers.convertedToMember} IS NULL`)
+      .where(ftCond ? and(sql`${firstTimers.convertedToMember} IS NULL`, ftCond) : sql`${firstTimers.convertedToMember} IS NULL`)
       .orderBy(desc(firstTimers.createdAt))
       .limit(5);
 
@@ -1932,11 +1937,17 @@ export class DatabaseStorage implements IStorage {
   // Reports
   // -------------------------------------------------------------------------
 
-  async getExecutiveSummary() {
+  async getExecutiveSummary(scope: Scope) {
+    const unrestricted = scope.role === "super_admin";
+    const memberScope = this.memberScopeSubquery(scope);
+    const memberBranchFilter = unrestricted ? sql`` : sql`AND branch_id = ${scope.branchId}`;
+    const clusterBranchFilter = unrestricted ? sql`` : sql`AND cl.branch_id = ${scope.branchId}`;
+
     // Members by status
     const membersByStatus = await db
       .select({ status: members.status, count: sql<number>`COUNT(*)::int` })
       .from(members)
+      .where(this.branchCondition(members, scope))
       .groupBy(members.status);
 
     // Member growth — new members per month for the last 6 months
@@ -1945,46 +1956,57 @@ export class DatabaseStorage implements IStorage {
              COUNT(*)::int AS count
       FROM members
       WHERE join_date::date >= DATE_TRUNC('month', NOW()) - INTERVAL '5 months'
+      ${memberBranchFilter}
       GROUP BY DATE_TRUNC('month', join_date::date)
       ORDER BY DATE_TRUNC('month', join_date::date)
     `);
 
     // Sunday attendance trend — last 8 service dates that have records
-    const attendanceTrend = await db
+    const attendanceTrendQuery = db
       .select({
         date: attendance.serviceDate,
         present: sql<number>`COUNT(CASE WHEN ${attendance.status} = 'Present' THEN 1 END)::int`,
         total: sql<number>`COUNT(*)::int`,
       })
-      .from(attendance)
+      .from(attendance);
+    const attendanceTrend = await (memberScope
+      ? attendanceTrendQuery.where(inArray(attendance.memberId, memberScope))
+      : attendanceTrendQuery
+    )
       .groupBy(attendance.serviceDate)
       .orderBy(desc(attendance.serviceDate))
       .limit(8);
 
     // First timer stats
-    const [ftTotal] = await db.select({ count: sql<number>`COUNT(*)::int` }).from(firstTimers);
+    const ftCond = this.branchCondition(firstTimers, scope);
+    const [ftTotal] = await db.select({ count: sql<number>`COUNT(*)::int` }).from(firstTimers).where(ftCond);
     const [ftConverted] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(firstTimers)
-      .where(sql`${firstTimers.convertedToMember} IS NOT NULL`);
+      .where(ftCond ? and(sql`${firstTimers.convertedToMember} IS NOT NULL`, ftCond) : sql`${firstTimers.convertedToMember} IS NOT NULL`);
 
     // Follow-up task stats
-    const [fuTotal] = await db.select({ count: sql<number>`COUNT(*)::int` }).from(followUpTasks);
+    const [fuTotal] = await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(followUpTasks)
+      .where(memberScope ? inArray(followUpTasks.memberId, memberScope) : undefined);
     const [fuCompleted] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(followUpTasks)
-      .where(eq(followUpTasks.status, 'Completed'));
+      .where(memberScope ? and(eq(followUpTasks.status, 'Completed'), inArray(followUpTasks.memberId, memberScope)) : eq(followUpTasks.status, 'Completed'));
 
     // Occupation distribution
     const occupationDistribution = await db
       .select({ occupation: members.occupation, count: sql<number>`COUNT(*)::int` })
       .from(members)
+      .where(this.branchCondition(members, scope))
       .groupBy(members.occupation);
 
     // Gender distribution
     const genderDistribution = await db
       .select({ gender: members.gender, count: sql<number>`COUNT(*)::int` })
       .from(members)
+      .where(this.branchCondition(members, scope))
       .groupBy(members.gender);
 
     // Cell attendance by cluster (last 90 days)
@@ -1994,6 +2016,7 @@ export class DatabaseStorage implements IStorage {
       JOIN cells c ON c.id = ca.cell_id
       JOIN clusters cl ON cl.id = c.cluster_id
       WHERE ca.meeting_date >= NOW() - INTERVAL '90 days'
+      ${clusterBranchFilter}
       GROUP BY cl.name
       ORDER BY "totalAttendance" DESC
     `);
@@ -2013,16 +2036,17 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getFirstTimerAnalysis() {
+  async getFirstTimerAnalysis(scope: Scope) {
     const now = new Date();
     const quarterStart = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
     const quarterStartStr = quarterStart.toISOString().split('T')[0];
+    const ftCond = this.branchCondition(firstTimers, scope);
 
     // Conversion stats this quarter
     const [totalThisQtr] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(firstTimers)
-      .where(sql`${firstTimers.createdAt} >= ${quarterStartStr}::date`);
+      .where(ftCond ? and(sql`${firstTimers.createdAt} >= ${quarterStartStr}::date`, ftCond) : sql`${firstTimers.createdAt} >= ${quarterStartStr}::date`);
 
     const [convertedThisQtr] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
@@ -2030,7 +2054,8 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           sql`${firstTimers.createdAt} >= ${quarterStartStr}::date`,
-          sql`${firstTimers.convertedToMember} IS NOT NULL`
+          sql`${firstTimers.convertedToMember} IS NOT NULL`,
+          ...(ftCond ? [ftCond] : [])
         )
       );
 
@@ -2038,7 +2063,11 @@ export class DatabaseStorage implements IStorage {
     const convertedMembers = await db
       .select({ memberId: firstTimers.memberId, convertedAt: firstTimers.convertedToMember })
       .from(firstTimers)
-      .where(sql`${firstTimers.memberId} IS NOT NULL AND ${firstTimers.convertedToMember} IS NOT NULL`);
+      .where(
+        ftCond
+          ? and(sql`${firstTimers.memberId} IS NOT NULL AND ${firstTimers.convertedToMember} IS NOT NULL`, ftCond)
+          : sql`${firstTimers.memberId} IS NOT NULL AND ${firstTimers.convertedToMember} IS NOT NULL`
+      );
 
     let stillAttendingCount = 0;
     let totalServicesAttended = 0;
@@ -2088,7 +2117,8 @@ export class DatabaseStorage implements IStorage {
     // Retention by seeing-again intent
     const allFTs = await db
       .select({ seeingAgain: firstTimers.seeingAgain, memberId: firstTimers.memberId })
-      .from(firstTimers);
+      .from(firstTimers)
+      .where(ftCond);
 
     const intentMap: Record<string, { retained: number; droppedOff: number }> = {
       'Yes': { retained: 0, droppedOff: 0 },
@@ -2106,13 +2136,16 @@ export class DatabaseStorage implements IStorage {
     const howHeardRows = await db
       .select({ source: firstTimers.howHeardAbout, count: sql<number>`COUNT(*)::int` })
       .from(firstTimers)
+      .where(ftCond)
       .groupBy(firstTimers.howHeardAbout);
     const howHeardAbout = howHeardRows.map(r => ({ source: r.source, count: r.count }));
 
     // Enjoyed about service — unnest array column
+    const enjoyedBranchFilter = scope.role === "super_admin" ? sql`` : sql`WHERE branch_id = ${scope.branchId}`;
     const enjoyedRows = await (db as any).execute(sql`
       SELECT unnest(enjoyed_about_service) AS aspect, COUNT(*)::int AS count
       FROM first_timers
+      ${enjoyedBranchFilter}
       GROUP BY aspect
       ORDER BY count DESC
     `);
@@ -2135,15 +2168,26 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getCellAttendanceAnalysis() {
+  async getCellAttendanceAnalysis(scope: Scope) {
+    const unrestricted = scope.role === "super_admin";
+    const memberScope = this.memberScopeSubquery(scope);
+    // cells/clusters have no direct branch join in these three raw queries'
+    // FROM clause the same way, so each gets its own WHERE/AND fragment
+    // against cl.branch_id (clusters is joined/selected-from in all three).
+    const clusterWhereFilter = unrestricted ? sql`` : sql`WHERE cl.branch_id = ${scope.branchId}`;
+    const clusterAndFilter = unrestricted ? sql`` : sql`AND cl.branch_id = ${scope.branchId}`;
+
     // Attendance trend — daily counts for last 90 days
-    const trendRows = await db
+    const trendQuery = db
       .select({
         date: cellAttendance.meetingDate,
         count: sql<number>`COUNT(*)::int`,
       })
-      .from(cellAttendance)
-      .where(sql`${cellAttendance.meetingDate} >= NOW() - INTERVAL '90 days'`)
+      .from(cellAttendance);
+    const trendConditions = [sql`${cellAttendance.meetingDate} >= NOW() - INTERVAL '90 days'`];
+    if (memberScope) trendConditions.push(inArray(cellAttendance.memberId, memberScope));
+    const trendRows = await trendQuery
+      .where(and(...trendConditions))
       .groupBy(cellAttendance.meetingDate)
       .orderBy(cellAttendance.meetingDate);
 
@@ -2157,6 +2201,7 @@ export class DatabaseStorage implements IStorage {
       FROM cells c
       LEFT JOIN cell_attendance ca ON ca.cell_id = c.id
       LEFT JOIN clusters cl ON cl.id = c.cluster_id
+      ${clusterWhereFilter}
       GROUP BY c.id, c.name, cl.name
       ORDER BY "totalAttendance" DESC
       LIMIT 10
@@ -2172,6 +2217,7 @@ export class DatabaseStorage implements IStorage {
       FROM clusters cl
       LEFT JOIN cells c ON c.cluster_id = cl.id
       LEFT JOIN cell_attendance ca ON ca.cell_id = c.id
+      ${clusterWhereFilter}
       GROUP BY cl.id, cl.name
       ORDER BY "totalAttendance" DESC
     `);
@@ -2186,6 +2232,8 @@ export class DatabaseStorage implements IStorage {
       FROM cell_attendance ca
       JOIN cells c ON c.id = ca.cell_id
       LEFT JOIN clusters cl ON cl.id = c.cluster_id
+      WHERE true
+      ${clusterAndFilter}
       GROUP BY c.name, cl.name, ca.meeting_date
       ORDER BY ca.meeting_date DESC
       LIMIT 20
