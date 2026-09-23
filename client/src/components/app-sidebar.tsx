@@ -1,5 +1,6 @@
 import { Users, UserPlus, CalendarCheck, Home, MessageSquare, ClipboardList, Network, Building2, UserCog, ShieldCheck, LogOut, Megaphone, Settings, BarChart2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
@@ -79,30 +80,49 @@ const adminMenuItems = [
     url: "/branches",
     icon: Building2,
     onboardingId: "nav-branches",
+    requiredPermission: "branches.manage",
   },
   {
     title: "User Management",
     url: "/users",
     icon: UserCog,
     onboardingId: "nav-users",
+    requiredPermission: "users.manage",
   },
   {
     title: "Roles & Permissions",
     url: "/roles-permissions",
     icon: ShieldCheck,
     onboardingId: "nav-roles-permissions",
+    requiredPermission: "roles.manage",
   },
   {
     title: "Admin Settings",
     url: "/admin-settings",
     icon: Settings,
     onboardingId: "nav-admin-settings",
+    // Gated server-side by requireRole("super_admin", "branch_admin"), not by
+    // the customizable permission matrix, so it's checked by role below
+    // instead of requiredPermission.
+    requiredPermission: null as string | null,
   },
 ];
 
 export function AppSidebar() {
   const [location] = useLocation();
-  const { user, isAuthenticated, logout, isLoading } = useAuth();
+  const { user, isAuthenticated, logout, isLoading, userRole, isSuperAdmin, isBranchAdmin } = useAuth();
+
+  const { data: rolePermissions } = useQuery<Record<string, string[]>>({
+    queryKey: ["/api/role-permissions"],
+    enabled: isAuthenticated,
+  });
+
+  const myPermissions = userRole?.role ? rolePermissions?.[userRole.role] ?? [] : [];
+  const visibleAdminItems = adminMenuItems.filter((item) =>
+    item.requiredPermission
+      ? myPermissions.includes(item.requiredPermission)
+      : isSuperAdmin || isBranchAdmin
+  );
 
   const getInitials = () => {
     if (!user) return "U";
@@ -142,7 +162,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {isAuthenticated && (
+        {isAuthenticated && visibleAdminItems.length > 0 && (
           <>
             <SidebarSeparator />
 
@@ -150,7 +170,7 @@ export function AppSidebar() {
               <SidebarGroupLabel>Administration</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {adminMenuItems.map((item) => (
+                  {visibleAdminItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild isActive={location === item.url}>
                         <Link href={item.url} data-testid={`link-${item.title.toLowerCase().replace(' ', '-')}`} data-onboarding={item.onboardingId}>
