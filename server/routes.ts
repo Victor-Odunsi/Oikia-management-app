@@ -14,7 +14,7 @@ import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
 import crypto from "crypto";
-import { UNRESTRICTED_SCOPE, type Scope } from "./authz/scope";
+import { UNRESTRICTED_SCOPE, resolveUserScope, type Scope } from "./authz/scope";
 
 // ---------------------------------------------------------------------------
 // Encryption helpers for SMTP password storage (AES-256-GCM)
@@ -1483,20 +1483,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Branch routes (protected - requires authentication, mutations require super_admin)
-  app.get("/api/branches", isAuthenticated, async (req, res) => {
+  // Not gated by requirePermission: many different permission holders (a
+  // branch_rep creating a member, a branch_admin importing a CSV) all need
+  // to know at least their own branch, so this scopes the RESULT instead —
+  // every non-super_admin sees only their own branch, never the full list.
+  app.get("/api/branches", isAuthenticated, async (req: any, res) => {
     try {
+      const scope = await resolveUserScope(req.user.claims.sub);
       const branches = await storage.getBranches();
-      res.json(branches);
+      if (!scope) return res.json([]);
+      if (scope.role === "super_admin") return res.json(branches);
+      res.json(branches.filter((b) => b.id === scope.branchId));
     } catch (error) {
       console.error("Error fetching branches:", error);
       res.status(500).json({ error: "Failed to fetch branches" });
     }
   });
 
-  app.get("/api/branches/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/branches/:id", isAuthenticated, async (req: any, res) => {
     try {
       const branch = await storage.getBranchById(req.params.id);
       if (!branch) {
+        return res.status(404).json({ error: "Branch not found" });
+      }
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope || (scope.role !== "super_admin" && branch.id !== scope.branchId)) {
         return res.status(404).json({ error: "Branch not found" });
       }
       res.json(branch);

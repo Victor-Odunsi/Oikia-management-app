@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,14 @@ export function ImportDialog({ type, open, onClose }: ImportDialogProps) {
     queryKey: ["/api/branches"],
     enabled: type === "members",
   });
+
+  // Non-super_admin callers only ever get their own branch back from the
+  // API now — auto-select it instead of making them pick from a list of one.
+  useEffect(() => {
+    if (branches?.length === 1 && !branchId) {
+      setBranchId(branches[0].id);
+    }
+  }, [branches, branchId]);
 
   const resetState = () => {
     setFile(null);
@@ -154,7 +162,7 @@ export function ImportDialog({ type, open, onClose }: ImportDialogProps) {
               {type === "members" && (
                 <div className="space-y-2">
                   <Label htmlFor="branch-select">Branch *</Label>
-                  <Select value={branchId} onValueChange={setBranchId} disabled={stage === "importing"}>
+                  <Select value={branchId} onValueChange={setBranchId} disabled={stage === "importing" || (branches?.length ?? 0) <= 1}>
                     <SelectTrigger id="branch-select" data-testid="select-branch">
                       <SelectValue placeholder="Select a branch" />
                     </SelectTrigger>
