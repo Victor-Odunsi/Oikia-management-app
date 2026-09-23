@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertMemberSchema, insertFirstTimerSchema, insertAttendanceSchema, insertCommunicationSchema, insertFollowUpTaskSchema, insertClusterSchema, insertCellSchema, insertCellAttendanceSchema, insertBranchSchema, insertUserRoleSchema, roleAssignmentSchema, updateUserRoleSchema, signupSchema, insertOutreachSchema } from "@shared/schema";
+import { insertMemberSchema, insertFirstTimerSchema, insertAttendanceSchema, insertCommunicationSchema, insertFollowUpTaskSchema, insertClusterSchema, insertCellSchema, insertCellAttendanceSchema, insertBranchSchema, insertUserRoleSchema, roleAssignmentSchema, updateUserRoleSchema, signupSchema, insertOutreachSchema, type UserRole } from "@shared/schema";
 import { ZodError } from "zod";
 import multer from "multer";
 import { parse } from "csv-parse";
@@ -14,7 +14,7 @@ import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
 import crypto from "crypto";
-import { UNRESTRICTED_SCOPE } from "./authz/scope";
+import { UNRESTRICTED_SCOPE, type Scope } from "./authz/scope";
 
 // ---------------------------------------------------------------------------
 // Encryption helpers for SMTP password storage (AES-256-GCM)
@@ -1538,11 +1538,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Least-privilege guards for role management: users.manage is held by both
+  // super_admin and branch_admin, but a branch_admin must stay confined to
+  // their own branch and must never be able to grant super_admin — otherwise
+  // "branch admin" is really "admin of everything" via this one endpoint.
+  function assertNewRoleInScope(scope: Scope, newData: { role: string; branchId?: string | null }) {
+    if (scope.role === "super_admin") return;
+    if (newData.role === "super_admin") {
+      throw new Error("Only a super_admin can grant the super_admin role");
+    }
+    if (newData.branchId !== scope.branchId) {
+      throw new Error("You can only assign roles within your own branch");
+    }
+  }
+
+  function assertExistingRoleInScope(scope: Scope, existing: UserRole | undefined) {
+    if (scope.role === "super_admin" || !existing) return;
+    if (existing.role === "super_admin" || existing.branchId !== scope.branchId) {
+      throw new Error("You can only manage roles for users in your own branch");
+    }
+  }
+
   // User management routes (protected - requires authentication, mutations require super_admin)
   app.get("/api/users", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
       const users = await storage.getAllUsers();
-      res.json(users);
+      const scope = req.scope!;
+      const visible = scope.role === "super_admin"
+        ? users
+        : users.filter(u => u.role?.branchId === scope.branchId);
+      res.json(visible);
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
@@ -1575,6 +1600,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/user-roles", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
       const validatedData = roleAssignmentSchema.parse(req.body);
+      assertNewRoleInScope(req.scope!, validatedData);
+      const existing = await storage.getUserRole(validatedData.userId);
+      assertExistingRoleInScope(req.scope!, existing);
       const role = await storage.assignUserRole(validatedData);
       res.json(role);
 
@@ -1597,6 +1625,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/user-roles/:id", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
       const validatedData = updateUserRoleSchema.parse(req.body);
+      const existing = await storage.getUserRoleById(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Role assignment not found" });
+      }
+      assertExistingRoleInScope(req.scope!, existing);
+      assertNewRoleInScope(req.scope!, {
+        role: validatedData.role ?? existing.role,
+        branchId: validatedData.branchId ?? existing.branchId,
+      });
       const role = await storage.updateUserRole(req.params.id, validatedData);
       res.json(role);
     } catch (error: any) {
@@ -1607,11 +1644,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/user-roles/:id", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
+      const existing = await storage.getUserRoleById(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Role assignment not found" });
+      }
+      assertExistingRoleInScope(req.scope!, existing);
       await storage.deleteUserRole(req.params.id);
       res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error deleting user role:", error);
-      res.status(500).json({ error: "Failed to delete user role" });
+      res.status(error.message ? 400 : 500).json({ error: error.message || "Failed to delete user role" });
     }
   });
 
