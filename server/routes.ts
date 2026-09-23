@@ -1574,10 +1574,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/users/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/users/:id", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
       const user = await storage.getUserWithRole(req.params.id);
-      if (!user) {
+      // Out-of-scope is reported identically to not-found, same as every
+      // other scoped lookup — a branch_admin shouldn't learn that a user in
+      // another branch exists at all.
+      if (!user || (req.scope!.role !== "super_admin" && user.role?.branchId !== req.scope!.branchId)) {
         return res.status(404).json({ error: "User not found" });
       }
       res.json(user);
@@ -1587,9 +1590,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/users/:id/role", isAuthenticated, async (req, res) => {
+  app.get("/api/users/:id/role", isAuthenticated, requirePermission("users.manage"), async (req, res) => {
     try {
       const role = await storage.getUserRole(req.params.id);
+      if (role && req.scope!.role !== "super_admin" && role.branchId !== req.scope!.branchId) {
+        return res.status(404).json({ error: "User not found" });
+      }
       res.json(role || null);
     } catch (error) {
       console.error("Error fetching user role:", error);
