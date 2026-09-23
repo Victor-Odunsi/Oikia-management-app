@@ -1792,17 +1792,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSignupUser(data: { firstName: string; lastName: string; gender: string; address: string; phoneNumber: string; email: string; branchId: string; passwordHash: string }): Promise<User> {
-    const [user] = await db.insert(users).values({
-      firstName: data.firstName,
-      lastName: data.lastName,
-      gender: data.gender,
-      address: data.address,
-      phoneNumber: data.phoneNumber,
-      email: data.email,
-      branchId: data.branchId,
-      passwordHash: data.passwordHash,
-    }).returning();
-    return user;
+    // Transactional: a self-registered user is granted branch_rep on their
+    // own branch immediately, so a crash between the two inserts can't leave
+    // them stuck on the "Account Pending" screen with no role to retry into.
+    return await db.transaction(async (tx) => {
+      const [user] = await tx.insert(users).values({
+        firstName: data.firstName,
+        lastName: data.lastName,
+        gender: data.gender,
+        address: data.address,
+        phoneNumber: data.phoneNumber,
+        email: data.email,
+        branchId: data.branchId,
+        passwordHash: data.passwordHash,
+      }).returning();
+      await tx.insert(userRoles).values({
+        userId: user.id,
+        role: "branch_rep",
+        branchId: data.branchId,
+      });
+      return user;
+    });
   }
 
   async incrementLoginCount(userId: string): Promise<void> {
