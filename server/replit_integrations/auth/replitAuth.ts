@@ -51,7 +51,13 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      // "auto" marks the cookie Secure only when this specific request actually
+      // arrived over TLS, instead of assuming NODE_ENV=production implies HTTPS.
+      // That assumption broke sign-in entirely on a plain-HTTP deployment (a
+      // fresh EC2 sandbox box with no reverse proxy/TLS in front): the browser
+      // silently refuses to store or resend a Secure cookie over HTTP, so every
+      // request after login looked unauthenticated.
+      secure: "auto",
       maxAge: sessionTtl,
     },
   });
