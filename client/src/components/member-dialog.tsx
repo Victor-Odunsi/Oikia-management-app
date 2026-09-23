@@ -340,28 +340,25 @@ export function MemberDialog({ member, open, onClose }: MemberDialogProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Cluster *</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      value={field.value}
-                      disabled={!selectedBranchId}
-                    >
-                      <FormControl>
-                        <SelectTrigger data-testid="select-cluster">
-                          <SelectValue
-                            placeholder={
-                              selectedBranchId ? "Select cluster" : "Select a branch first"
-                            }
-                          />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {clusters?.map((cluster) => (
-                          <SelectItem key={cluster.id} value={cluster.name}>
-                            {cluster.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      {/* members.cluster is free text (no FK to the clusters
+                          table — CSV import already accepts any non-blank
+                          value), so this must allow typing a new name, not
+                          just picking from existing cluster records. The
+                          datalist still surfaces existing names for reuse. */}
+                      <Input
+                        {...field}
+                        list="cluster-suggestions"
+                        placeholder={selectedBranchId ? "Enter or select a cluster" : "Select a branch first"}
+                        disabled={!selectedBranchId}
+                        data-testid="input-cluster"
+                      />
+                    </FormControl>
+                    <datalist id="cluster-suggestions">
+                      {clusters?.map((cluster) => (
+                        <option key={cluster.id} value={cluster.name} />
+                      ))}
+                    </datalist>
                     <FormMessage />
                   </FormItem>
                 )}
