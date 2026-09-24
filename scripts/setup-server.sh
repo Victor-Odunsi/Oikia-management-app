@@ -56,3 +56,48 @@ else
   pm2 save
   echo "Run the command 'pm2 startup' printed above (once) so PM2 survives a reboot."
 fi
+
+# CloudWatch Logs shipping — EC2 only, auto-skipped elsewhere (e.g. the DO
+# droplet, which has no CloudWatch to ship to). Detected via IMDSv2 rather
+# than an env var, so this reflects the actual host, not app config that's
+# otherwise identical between branches. PM2's own log files are the source
+# (whichever user runs this script/PM2 — currently root on this box, hence
+# $HOME rather than a hardcoded /root).
+TOKEN=$(curl -fsS -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null || true)
+if [ -n "$TOKEN" ] && curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/instance-id" >/dev/null 2>&1; then
+  echo "Detected EC2 — configuring CloudWatch Logs shipping..."
+  if ! command -v /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl >/dev/null 2>&1; then
+    ARCH=$(dpkg --print-architecture)
+    curl -fsSL "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/${ARCH}/latest/amazon-cloudwatch-agent.deb" -o /tmp/amazon-cloudwatch-agent.deb
+    sudo dpkg -i -E /tmp/amazon-cloudwatch-agent.deb
+  fi
+  sudo mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+  sudo tee /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json > /dev/null <<CWCONFIG
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "$HOME/.pm2/logs/occwaypoint-out-0.log",
+            "log_group_name": "/oikia/app",
+            "log_stream_name": "{instance_id}/stdout",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "$HOME/.pm2/logs/occwaypoint-error-0.log",
+            "log_group_name": "/oikia/app",
+            "log_stream_name": "{instance_id}/stderr",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+CWCONFIG
+  sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+else
+  echo "Not on EC2 (or metadata unreachable) — skipping CloudWatch Logs shipping setup."
+fi
