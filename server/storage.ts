@@ -86,7 +86,7 @@ export interface IStorage {
   batchToggleAttendance(entries: { memberId: string; serviceDate: string; status: string }[]): Promise<void>;
 
   // Stats
-  getStats(): Promise<{
+  getStats(scope: Scope): Promise<{
     totalMembers: number;
     totalFirstTimers: number;
     recentAttendance: number;
@@ -1096,31 +1096,37 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getStats(): Promise<{
+  async getStats(scope: Scope): Promise<{
     totalMembers: number;
     totalFirstTimers: number;
     recentAttendance: number;
     newMembersThisMonth: number;
   }> {
+    const memberCond = this.branchCondition(members, scope);
     const [totalMembers] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
-      .from(members);
+      .from(members)
+      .where(memberCond);
 
+    const ftCond = this.branchCondition(firstTimers, scope);
     const [totalFirstTimers] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(firstTimers)
-      .where(sql`${firstTimers.convertedToMember} IS NULL`);
+      .where(ftCond ? and(sql`${firstTimers.convertedToMember} IS NULL`, ftCond) : sql`${firstTimers.convertedToMember} IS NULL`);
 
     const today = new Date();
     const lastSunday = new Date(today);
     lastSunday.setDate(today.getDate() - today.getDay());
     const lastSundayStr = lastSunday.toISOString().split("T")[0];
 
+    const memberScope = this.memberScopeSubquery(scope);
     const [recentAttendance] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(attendance)
       .where(
-        and(eq(attendance.serviceDate, lastSundayStr), eq(attendance.status, "Present"))
+        memberScope
+          ? and(eq(attendance.serviceDate, lastSundayStr), eq(attendance.status, "Present"), inArray(attendance.memberId, memberScope))
+          : and(eq(attendance.serviceDate, lastSundayStr), eq(attendance.status, "Present"))
       );
 
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
@@ -1130,7 +1136,7 @@ export class DatabaseStorage implements IStorage {
     const [newMembers] = await db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(members)
-      .where(sql`${members.joinDate} >= ${firstDayOfMonth}`);
+      .where(memberCond ? and(sql`${members.joinDate} >= ${firstDayOfMonth}`, memberCond) : sql`${members.joinDate} >= ${firstDayOfMonth}`);
 
     return {
       totalMembers: totalMembers.count,

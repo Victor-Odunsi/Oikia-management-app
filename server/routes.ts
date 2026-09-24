@@ -423,9 +423,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Stats endpoint
-  app.get("/api/stats", isAuthenticated, async (req, res) => {
+  app.get("/api/stats", isAuthenticated, async (req: any, res) => {
     try {
-      const stats = await storage.getStats();
+      const scope = await resolveUserScope(req.user.claims.sub);
+      if (!scope) return res.json({ totalMembers: 0, totalFirstTimers: 0, recentAttendance: 0, newMembersThisMonth: 0 });
+      const stats = await storage.getStats(scope);
       res.json(stats);
     } catch (error) {
       console.error("Error fetching stats:", error);
