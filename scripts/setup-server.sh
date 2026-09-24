@@ -66,6 +66,9 @@ fi
 TOKEN=$(curl -fsS -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null || true)
 if [ -n "$TOKEN" ] && curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/instance-id" >/dev/null 2>&1; then
   echo "Detected EC2 — configuring CloudWatch Logs shipping..."
+  # $HOME isn't set under SSM RunCommand (same class of gap as $USER
+  # earlier) — look it up directly instead of assuming it's exported.
+  HOME_DIR="$(getent passwd "$(whoami)" | cut -d: -f6)"
   if ! command -v /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl >/dev/null 2>&1; then
     ARCH=$(dpkg --print-architecture)
     curl -fsSL "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/${ARCH}/latest/amazon-cloudwatch-agent.deb" -o /tmp/amazon-cloudwatch-agent.deb
@@ -79,13 +82,13 @@ if [ -n "$TOKEN" ] && curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $TOKEN" "http
       "files": {
         "collect_list": [
           {
-            "file_path": "$HOME/.pm2/logs/occwaypoint-out-0.log",
+            "file_path": "$HOME_DIR/.pm2/logs/occwaypoint-out-0.log",
             "log_group_name": "/oikia/app",
             "log_stream_name": "{instance_id}/stdout",
             "timezone": "UTC"
           },
           {
-            "file_path": "$HOME/.pm2/logs/occwaypoint-error-0.log",
+            "file_path": "$HOME_DIR/.pm2/logs/occwaypoint-error-0.log",
             "log_group_name": "/oikia/app",
             "log_stream_name": "{instance_id}/stderr",
             "timezone": "UTC"
