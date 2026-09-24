@@ -5,9 +5,12 @@ import type { Pool as PgPoolInstance } from 'pg';
 import { createRequire } from 'module';
 import ws from "ws";
 import * as schema from "@shared/schema";
+import { logger } from "./observability";
 
 // pg is a CommonJS module — use createRequire so esbuild doesn't convert it to
 // a named ESM import (import { Pool } from 'pg') which Node ESM cannot resolve.
+// (Per-query tracing on this path comes from OpenTelemetry's pg
+// auto-instrumentation in server/tracing.ts — no manual patching needed here.)
 const _require = createRequire(import.meta.url);
 const PgPool = (_require('pg') as typeof import('pg')).Pool;
 
@@ -48,7 +51,7 @@ if (process.env.DB_DRIVER === "pg") {
 // entire single-process app for every branch at once. Logging it here lets
 // the pool recover the connection on its own instead of taking the process down.
 pool.on("error", (err: Error) => {
-  console.error("[db] pool error (connection recovered automatically):", err);
+  logger.error({ err }, "[db] pool error (connection recovered automatically)");
 });
 
 export { pool, db };
